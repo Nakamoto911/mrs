@@ -15,6 +15,9 @@ A quantitative research platform for discovering which macroeconomic variables d
 # Install dependencies
 pip install -r requirements.txt
 
+# Acquire data (independent step)
+python src/preprocessing/data_acquisition.py
+
 # Run feature pipeline
 python run_tournament.py --features-only
 
@@ -31,7 +34,10 @@ cd streamlit_app && streamlit run app.py
 macro_regime_system/
 ├── configs/                      # Configuration files
 ├── src/
+
 │   ├── preprocessing/            # Data loading & transforms
+│   │   ├── data_acquisition.py   # Independent data fetcher
+│   │   └── data_loader.py        # Data reader & validator
 │   ├── feature_engineering/      # Feature generation
 │   ├── models/                   # Model implementations
 │   └── evaluation/               # Evaluation & analysis
@@ -42,7 +48,7 @@ macro_regime_system/
 
 ## Feature Pipeline
 
-1. Download FRED-MD (128 variables)
+1. Acquire Data (FRED-MD + Assets) via independent script
 2. Apply transformations for stationarity
 3. Generate macro ratios
 4. Create quintile features
