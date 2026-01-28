@@ -82,10 +82,11 @@ Automated pipeline: ~600 raw features → ~250–300 cluster representatives
 ### Step 0: Data Acquisition
 
 - **Script:** Independent `data_acquisition.py` module
-- **Action:** Downloads latest FRED-MD vintage (128 series) and Asset Prices (Yahoo: SPY, IEF, GLD + FRED Proxies)
+- **Action:** Downloads latest FRED-MD vintage (128 series), Historical Vintages, and Asset Prices (Yahoo: SPY, IEF, GLD + FRED Proxies)
 - **Output:** Human-readable CSVs in `data/raw/` (`fred_md.csv`, `assets.csv`, `vintages/`)
 - **Process:**
     - Fetch FRED-MD current vintage
+    - Fetch FRED-MD historical vintages (for validation)
     - Fetch Asset Prices & Calculate Returns
     - Extend to 1959 using FRED proxies (consistent with Section 1.2)
     - Save raw data to proper CSV format
