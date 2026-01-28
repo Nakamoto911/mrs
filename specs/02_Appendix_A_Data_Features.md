@@ -26,6 +26,12 @@
 - Standardized transformation codes for stationarity
 - 8 categories: Output/Income (17), Labor (32), Housing (10), Consumption/Orders (14), Money/Credit (14), Interest Rates/Spreads (22), Prices (21), Stock Market (3)
 
+**Historical Vintages (ALFRED):**
+- **1999-08 to 2014-12:** `historical_fred-md.zip`
+- **2015-01 to 2024-12:** `historical-vintages-of-fred-md-2015-01-to-2024-12.zip`
+- **2025-01 to Present:** Individual monthly CSVs (e.g., `2025-01.csv`, `current.csv`)
+- **Source:** [St. Louis Fed Research / McCracken Databases](https://www.stlouisfed.org/research/economists/mccracken/fred-databases)
+
 ### 1.2 Asset Return Data — Historical Extension
 
 | Asset | Modern Data | Historical Proxy | Method |
@@ -86,7 +92,7 @@ Automated pipeline: ~600 raw features → ~250–300 cluster representatives
 - **Output:** Human-readable CSVs in `data/raw/` (`fred_md.csv`, `assets.csv`, `vintages/`)
 - **Process:**
     - Fetch FRED-MD current vintage
-    - Fetch FRED-MD historical vintages (for validation)
+    - Fetch FRED-MD historical vintages (Download & Unzip Archives + Monthly CSVs)
     - Fetch Asset Prices & Calculate Returns
     - Extend to 1959 using FRED-MD proxies (consistent with Section 1.2)
     - **Proxy Strategy:**

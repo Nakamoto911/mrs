@@ -1,0 +1,12 @@
+ALFRED REAL-TIME VALIDATION REPORT
+==================================
+Asset: BOND
+Model: elastic_net
+Validation Period: 2000-2024
+
+Performance Metrics:
+Revised IC:  -0.0327
+Real-Time IC: 0.6484
+Revision Risk: 2080.59%
+
+Verdict: REJECT

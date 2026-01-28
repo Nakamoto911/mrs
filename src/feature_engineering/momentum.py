@@ -54,24 +54,24 @@ class MomentumFeatureGenerator:
         columns = columns or df.columns.tolist()
         columns = [c for c in columns if c in df.columns]
         
-        features_list = []
+        all_features = {}
         
         for col in columns:
             series = df[col]
-            col_features = pd.DataFrame(index=df.index)
             
             for window in self.windows:
-                col_features[f"{col}_chg_{window}M"] = self.compute_change(series, window)
+                all_features[f"{col}_chg_{window}M"] = self.compute_change(series, window)
                 
                 if self.include_acceleration:
-                    col_features[f"{col}_accel_{window}M"] = self.compute_acceleration(series, window)
+                    all_features[f"{col}_accel_{window}M"] = self.compute_acceleration(series, window)
                 
                 if self.include_zscore:
-                    col_features[f"{col}_zscore_{window}M"] = self.compute_rolling_zscore(series, window)
-            
-            features_list.append(col_features)
+                    all_features[f"{col}_zscore_{window}M"] = self.compute_rolling_zscore(series, window)
         
-        result = pd.concat(features_list, axis=1)
+        if not all_features:
+            return pd.DataFrame(index=df.index)
+            
+        result = pd.DataFrame(all_features, index=df.index)
         logger.info(f"Generated {len(result.columns)} momentum features from {len(columns)} columns")
         return result
 

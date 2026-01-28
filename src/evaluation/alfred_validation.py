@@ -1,0 +1,150 @@
+"""
+ALFRED Real-Time Validation
+===========================
+Executes historical simulations using point-in-time vintage data.
+"""
+
+import pandas as pd
+import numpy as np
+import joblib
+import logging
+from typing import List, Dict, Optional
+from scipy.stats import spearmanr
+from pathlib import Path
+
+from src.preprocessing.alfred_loader import ALFREDVintageLoader
+from src.feature_engineering.frozen_pipeline import FrozenFeaturePipeline
+
+logger = logging.getLogger(__name__)
+
+class ALFREDValidator:
+    """
+    Core engine for running historical simulation loops using ALFRED vintages.
+    """
+    def __init__(self, 
+                 model_path: str, 
+                 validation_dates: List[pd.Timestamp],
+                 vintages_dir: str = "data/raw/vintages",
+                 transform_codes_path: str = "data/raw/fred_md_transforms.csv"):
+        """
+        Args:
+            model_path: Path to the .pkl file of the trained model.
+            validation_dates: List of semi-annual dates for simulation.
+            vintages_dir: Directory containing vintage CSVs.
+            transform_codes_path: Path to FRED-MD transformation codes.
+        """
+        self.model = joblib.load(model_path)
+        
+        # Identify features needed by the model
+        if hasattr(self.model, 'feature_names_in_'):
+            self.features_needed = self.model.feature_names_in_.tolist()
+        elif hasattr(self.model, 'feature_names'):
+            self.features_needed = self.model.feature_names
+        elif hasattr(self.model, 'features'):
+            self.features_needed = self.model.features
+        else:
+            raise AttributeError("Model does not have 'feature_names_in_', 'feature_names', or 'features' attribute.")
+            
+        self.loader = ALFREDVintageLoader(vintages_dir)
+        
+        # Load transform codes
+        self.transform_codes = {}
+        if Path(transform_codes_path).exists():
+            t_df = pd.read_csv(transform_codes_path)
+            for col in t_df.columns:
+                try:
+                    self.transform_codes[col] = int(t_df.iloc[0][col])
+                except:
+                    self.transform_codes[col] = 1
+        elif validation_dates:
+            # Try to get from the first vintage
+            self.transform_codes = self.loader.get_transform_codes(validation_dates[0])
+                    
+        self.pipeline = FrozenFeaturePipeline(self.features_needed, self.transform_codes)
+        self.validation_dates = sorted(validation_dates)
+
+    def run_validation(self, true_returns: pd.Series) -> pd.DataFrame:
+        """
+        Execute the historical simulation loop.
+        
+        Args:
+            true_returns: Series of realized returns (target variable) to compare against.
+            
+        Returns:
+            DataFrame with [Date, Forecast_RealTime, Realized_Later]
+        """
+        results = []
+        
+        for t in self.validation_dates:
+            logger.info(f"Simulating point-in-time for: {t.strftime('%Y-%m-%d')}")
+            
+            try:
+                # 1. Load Vintage(t)
+                vintage_df = self.loader.load_vintage(t)
+                
+                # 2. Generate features X_t (using FrozenPipeline)
+                X_t = self.pipeline.transform_vintage(vintage_df)
+                
+                # We need the most recent observation in the vintage for prediction
+                # Usually the last row in X_t
+                X_latest = X_t.tail(1)
+                
+                # 3. Predict Y_{t+h} (Forecast)
+                prediction_result = self.model.predict(X_latest)
+                if hasattr(prediction_result, 'iloc'):
+                    forecast = prediction_result.iloc[0]
+                else:
+                    forecast = prediction_result[0]
+                
+                # 4. Get realized return (from true_returns)
+                realized = np.nan
+                if t in true_returns.index:
+                    realized = true_returns.loc[t]
+                
+                results.append({
+                    'Date': t,
+                    'Forecast_RealTime': forecast,
+                    'Realized_Return': realized
+                })
+                
+            except Exception as e:
+                logger.error(f"Error validating date {t}: {e}")
+                
+        return pd.DataFrame(results)
+
+    def compute_metrics(self, validation_results: pd.DataFrame, revised_ic: float) -> Dict:
+        """
+        Compute Revision Risk metrics.
+        
+        Args:
+            validation_results: Output from run_validation.
+            revised_ic: The IC achieved during the Discovery Phase (on revised data).
+            
+        Returns:
+            Dictionary with Real-Time IC, Revision Risk, etc.
+        """
+        # Remove NaNs
+        clean_results = validation_results.dropna(subset=['Realized_Return'])
+        
+        if len(clean_results) < 2:
+            return {
+                'RealTime_IC': 0.0,
+                'Revision_Risk': 1.0,
+                'Status': 'Insufficient Data'
+            }
+            
+        # 1. Real-Time IC
+        rt_ic, _ = spearmanr(clean_results['Forecast_RealTime'], clean_results['Realized_Return'])
+        
+        # 2. Revision Risk
+        # (IC_Revised - IC_RealTime) / IC_Revised
+        rev_risk = 0.0
+        if abs(revised_ic) > 1e-6:
+            rev_risk = (revised_ic - rt_ic) / revised_ic
+            
+        return {
+            'RealTime_IC': rt_ic,
+            'Revised_IC': revised_ic,
+            'Revision_Risk': rev_risk,
+            'Sample_Size': len(clean_results)
+        }

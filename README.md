@@ -24,6 +24,12 @@ python run_tournament.py --features-only
 # Run full tournament
 python run_tournament.py --assets all --models all
 
+# Perform ALFRED Real-Time Validation (identifies Revision Risk)
+python run_validation.py --asset SPX --model xgboost
+
+# Batch validate all assets/models and generate summary report
+python run_validation.py
+
 # Launch dashboard
 cd streamlit_app && streamlit run app.py
 ```
@@ -43,7 +49,8 @@ macro_regime_system/
 │   └── evaluation/               # Evaluation & analysis
 ├── streamlit_app/                # Interactive dashboard
 ├── experiments/                  # Output storage
-└── run_tournament.py             # Main entry point
+├── run_tournament.py             # Discovery phase entry point
+└── run_validation.py             # ALFRED validation phase entry point
 ```
 
 ## Feature Pipeline

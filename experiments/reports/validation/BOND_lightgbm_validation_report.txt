@@ -1,0 +1,12 @@
+ALFRED REAL-TIME VALIDATION REPORT
+==================================
+Asset: BOND
+Model: lightgbm
+Validation Period: 2000-2024
+
+Performance Metrics:
+Revised IC:  0.3837
+Real-Time IC: 0.5674
+Revision Risk: -47.88%
+
+Verdict: DEPLOYABLE

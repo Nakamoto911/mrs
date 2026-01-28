@@ -1,0 +1,12 @@
+ALFRED REAL-TIME VALIDATION REPORT
+==================================
+Asset: BOND
+Model: lasso
+Validation Period: 2000-2024
+
+Performance Metrics:
+Revised IC:  -0.0032
+Real-Time IC: 0.7270
+Revision Risk: 22970.50%
+
+Verdict: REJECT

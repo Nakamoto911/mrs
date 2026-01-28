@@ -19,8 +19,9 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
-from io import StringIO
+from io import StringIO, BytesIO
 import re
+import zipfile
 
 
 
@@ -162,39 +163,78 @@ class DataAcquisitionOrchestrator:
 
     def fetch_fred_md_history(self) -> None:
         """Fetch historical vintages of FRED-MD."""
-        # For this prototype, we will simulate or fetch a few key vintages if available online
-        # However, McCracken website mainly hosts 'current.csv' and specific monthly files YYYY-MM.csv
-        # We can try to download past months based on the pattern discovered.
-        
         logger.info("Fetching historical FRED-MD vintages...")
-        # Try to download the last 12 months as "vintages"
-        current_date = datetime.now()
         
-        base_url = "https://files.stlouisfed.org/files/htdocs/fred-md/monthly/"
-        # Vintages are usually stored as YYYY-MM.csv
+        # 1. Download and Extract ZIP archives (bulk history)
+        # URLs from McCracken website (Hardcoded as they change rarely, but could be scraped)
+        zip_urls = [
+            # 1999-08 to 2014-12
+            "https://www.stlouisfed.org/-/media/project/frbstl/stlouisfed/research/fred-md/historical_fred-md.zip?sc_lang=en&hash=8BD5C4CC3C95D80EACD2AC2E07A613AE",
+            # 2015-01 to 2024-12
+            "https://www.stlouisfed.org/-/media/project/frbstl/stlouisfed/research/fred-md/historical-vintages-of-fred-md-2015-01-to-2024-12.zip?sc_lang=en&hash=FAFE816620371A78CAC637490B0FEB8E"
+        ]
         
-        for i in range(12):
-            date = current_date - timedelta(days=30*i)
-            str_date = date.strftime("%Y-%m")
-            url = f"{base_url}{str_date}.csv"
-            
-            save_path = self.vintages_dir / f"{str_date}.csv"
-            if save_path.exists():
-                continue
-                
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        
+        for i, url in enumerate(zip_urls):
             try:
-                # logger.info(f"Trying vintage {str_date}...")
-                response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                if response.status_code == 200:
-                    with open(save_path, 'wb') as f:
-                        f.write(response.content)
-                    # logger.info(f"Downloaded vintage {str_date}")
-            except Exception:
-                pass
+                logger.info(f"Downloading historical zip {i+1}/{len(zip_urls)}...")
+                response = requests.get(url, headers=headers, timeout=120)
+                response.raise_for_status()
+                
+                with zipfile.ZipFile(BytesIO(response.content)) as z:
+                    # Extract only CSV files
+                    for file_info in z.infolist():
+                        if file_info.filename.endswith('.csv'):
+                            # Flatten structure: extract directly to vintages_dir
+                            # Some zips might have subfolders
+                            filename = Path(file_info.filename).name
+                            # Ensure it looks like YYYY-MM.csv (some might be slightly different)
+                            if re.match(r'\d{4}-\d{2}', filename):
+                                target_path = self.vintages_dir / filename
+                                with open(target_path, 'wb') as f_out:
+                                    f_out.write(z.read(file_info))
+                                logger.debug(f"Extracted {filename}")
+                            
+            except Exception as e:
+                logger.error(f"Failed to process zip {url}: {e}")
 
-
+        # 2. Scrape and Download 2025+ individual files
+        # The zips cover up to 2024-12. We need 2025 onwards.
+        try:
+            logger.info("Discovering recent monthly vintages (2025+)...")
+            response = requests.get(self.RESEARCH_PAGE_URL, headers=headers, timeout=30)
+            response.raise_for_status()
             
-        return pd.Series()
+            # Find all monthly CSV links
+            # Pattern: href=".../monthly/YYYY-MM.csv" or ".../monthly/YYYY-MM-md.csv"
+            # We specifically look for 2025 and later
+            links = re.findall(r'href="([^"]+/monthly/(202[5-9]-\d{2})[^"]*\.csv[^"]*)"', response.text)
+            
+            for link, date_part in links:
+                filename = f"{date_part}.csv"
+                target_path = self.vintages_dir / filename
+                
+                if target_path.exists():
+                    continue
+                    
+                full_url = link
+                if full_url.startswith('/'):
+                    full_url = "https://www.stlouisfed.org" + full_url
+                
+                logger.info(f"Downloading recent vintage: {filename}")
+                try:
+                    file_resp = requests.get(full_url, headers=headers, timeout=30)
+                    if file_resp.status_code == 200:
+                        with open(target_path, 'wb') as f:
+                            f.write(file_resp.content)
+                except Exception as e:
+                    logger.warning(f"Failed to download {filename}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to scrape recent vintages: {e}")
+
+        logger.info(f"Historical vintages updated in {self.vintages_dir}")
 
     def _load_fred_md_proxies(self) -> pd.DataFrame:
         """Load and calculate proxy series from the local FRED-MD csv."""
@@ -270,12 +310,12 @@ class DataAcquisitionOrchestrator:
                     df = df_hist.reset_index()
                     
                     # Ensure 'date' is datetime
-                    if 'date' in df.columns:
-                        df['date'] = pd.to_datetime(df['date'])
-                        df = df.set_index('date')
-                    elif 'index' in df.columns: # Sometimes it returns 'index' if not named
-                        df['index'] = pd.to_datetime(df['index']) 
-                        df = df.set_index('index')
+                    date_col = 'date' if 'date' in df.columns else 'index' if 'index' in df.columns else None
+                    if date_col:
+                        # Ensure we convert to UTC then strip TZ to match FRED data
+                        df[date_col] = pd.to_datetime(df[date_col], utc=True)
+                        df = df.set_index(date_col)
+                        df.index = df.index.tz_localize(None)
                         
                     # Filter just adjclose
                     if 'adjclose' in df.columns:

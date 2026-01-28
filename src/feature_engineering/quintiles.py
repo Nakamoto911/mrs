@@ -82,27 +82,29 @@ class QuintileFeatureGenerator:
         if self.expanding_window:
             # Use expanding window to avoid look-ahead bias
             def expanding_quintile(x):
+                # x is a numpy array (raw=True)
                 if len(x) < self.min_observations:
                     return np.nan
-                # Compute quintile for last value based on all prior values
-                current = x.iloc[-1]
-                historical = x.iloc[:-1]
+                current = x[-1]
+                if np.isnan(current):
+                    return np.nan
+                # Mask nans in historical data
+                hist = x[:-1]
+                mask = ~np.isnan(hist)
+                valid_hist = hist[mask]
                 
-                # Handle edge cases
-                if pd.isna(current):
+                if len(valid_hist) == 0:
                     return np.nan
                     
-                # Compute percentile rank
-                pct_rank = (historical < current).sum() / len(historical)
+                # Compute percentile rank: (current > historical).mean()
+                pct_rank = (valid_hist < current).sum() / len(valid_hist)
                 
                 # Convert to quintile (1 to n_quintiles)
                 quintile = int(np.floor(pct_rank * self.n_quintiles)) + 1
-                quintile = min(quintile, self.n_quintiles)  # Cap at max
-                
-                return quintile
+                return min(quintile, self.n_quintiles)
             
             return series.expanding(min_periods=self.min_observations).apply(
-                expanding_quintile, raw=False
+                expanding_quintile, raw=True
             )
         else:
             # Use full sample (not recommended for production)
@@ -191,7 +193,7 @@ class QuintileFeatureGenerator:
         missing_vars = [v for v in variables if v not in df.columns]
         
         if missing_vars:
-            logger.warning(f"Variables not found in data: {missing_vars}")
+            logger.info(f"Note: {len(missing_vars)} variables not found in vintage data (expected for early dates): {missing_vars[:5]}...")
         
         if not available_vars:
             logger.warning("No variables available for quintile features")
