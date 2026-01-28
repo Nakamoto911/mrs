@@ -71,6 +71,12 @@ class HierarchicalClusterSelector:
         # Use Spearman (rank correlation) for robustness
         corr = df.corr(method='spearman')
         
+        # Fill NaNs with 0 (assume no correlation if insufficient data)
+        # This prevents linkage computation failure
+        if corr.isna().any().any():
+            logger.debug("Filling NaNs in correlation matrix with 0")
+            corr = corr.fillna(0)
+            
         self.correlation_matrix = corr
         return corr
     
@@ -112,6 +118,18 @@ class HierarchicalClusterSelector:
         Returns:
             Dictionary mapping cluster IDs to feature lists
         """
+        # Filter out constant columns (zero variance)
+        # These cause NaNs in correlation matrix and break hierarchical clustering
+        std = df.std()
+        constant_cols = std[std == 0].index.tolist()
+        if constant_cols:
+            logger.info(f"Removing {len(constant_cols)} constant features before clustering")
+            df = df.drop(columns=constant_cols)
+            
+        if len(df.columns) == 0:
+            logger.warning("No features left after removing constant columns")
+            return {}
+            
         # Compute correlation matrix
         corr = self.compute_correlation_matrix(df)
         

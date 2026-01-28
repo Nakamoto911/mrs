@@ -32,11 +32,11 @@ class QuintileFeatureGenerator:
         'TB3MS',         # 3-Month Treasury
         'GS1',           # 1-Year Treasury
         'GS5',           # 5-Year Treasury
-        'BAA10Y',        # Credit Spread (BAA-10Y)  
-        'AAA10Y',        # Credit Spread (AAA-10Y)
+        'BAA_10Y_Spread', # Credit Spread (BAA-10Y)  
+        'AAA_10Y_Spread', # Credit Spread (AAA-10Y)
         'VIXCLSx',       # VIX
         'UNRATE',        # Unemployment Rate
-        'UMCSENT',       # Consumer Sentiment
+        'UMCSENTx',      # Consumer Sentiment
         'HOUST',         # Housing Starts
         'M2REAL',        # Real M2
         'INDPRO',        # Industrial Production
@@ -125,15 +125,17 @@ class QuintileFeatureGenerator:
         Returns:
             DataFrame with one-hot encoded columns
         """
-        encoded = pd.DataFrame(index=quintile_series.index)
+        cols = []
         
         for q in range(1, self.n_quintiles + 1):
             col_name = f"{base_name}_Q{q}"
-            encoded[col_name] = (quintile_series == q).astype(float)
+            s = (quintile_series == q).astype(float)
             # Set NaN where original was NaN
-            encoded.loc[quintile_series.isna(), col_name] = np.nan
+            s.loc[quintile_series.isna()] = np.nan
+            s.name = col_name
+            cols.append(s)
         
-        return encoded
+        return pd.concat(cols, axis=1) if cols else pd.DataFrame(index=quintile_series.index)
     
     def _compute_z_score_within_regime(self, series: pd.Series,
                                        quintile_series: pd.Series,
@@ -149,7 +151,7 @@ class QuintileFeatureGenerator:
         Returns:
             DataFrame with regime-conditional z-scores
         """
-        result = pd.DataFrame(index=series.index)
+        cols = []
         
         for q in range(1, self.n_quintiles + 1):
             col_name = f"{base_name}_Q{q}_zscore"
@@ -165,9 +167,10 @@ class QuintileFeatureGenerator:
                 zscore = pd.Series(np.nan, index=series.index)
                 zscore[mask] = (series[mask] - quintile_mean) / quintile_std.replace(0, np.nan)
                 
-                result[col_name] = zscore
+                zscore.name = col_name
+                cols.append(zscore)
         
-        return result
+        return pd.concat(cols, axis=1) if cols else pd.DataFrame(index=series.index)
     
     def generate_features(self, df: pd.DataFrame,
                          variables: Optional[List[str]] = None) -> pd.DataFrame:
@@ -240,7 +243,7 @@ class QuintileFeatureGenerator:
         Returns:
             DataFrame with quintile change features
         """
-        changes = pd.DataFrame(index=quintile_df.index)
+        changes_list = []
         
         # Find quintile rank columns
         rank_cols = [c for c in quintile_df.columns if c.endswith('_quintile')]
@@ -249,17 +252,29 @@ class QuintileFeatureGenerator:
             base_name = col.replace('_quintile', '')
             
             # Quintile change (can be -4 to +4 for quintiles)
-            changes[f"{base_name}_quintile_chg"] = quintile_df[col].diff()
+            chg = quintile_df[col].diff()
+            chg.name = f"{base_name}_quintile_chg"
+            changes_list.append(chg)
             
             # Regime shift indicators
-            changes[f"{base_name}_regime_up"] = (quintile_df[col].diff() > 0).astype(float)
-            changes[f"{base_name}_regime_down"] = (quintile_df[col].diff() < 0).astype(float)
+            up = (quintile_df[col].diff() > 0).astype(float)
+            up.name = f"{base_name}_regime_up"
+            changes_list.append(up)
+            
+            down = (quintile_df[col].diff() < 0).astype(float)
+            down.name = f"{base_name}_regime_down"
+            changes_list.append(down)
             
             # Extreme regime indicators
-            changes[f"{base_name}_extreme_high"] = (quintile_df[col] == self.n_quintiles).astype(float)
-            changes[f"{base_name}_extreme_low"] = (quintile_df[col] == 1).astype(float)
+            ex_high = (quintile_df[col] == self.n_quintiles).astype(float)
+            ex_high.name = f"{base_name}_extreme_high"
+            changes_list.append(ex_high)
+            
+            ex_low = (quintile_df[col] == 1).astype(float)
+            ex_low.name = f"{base_name}_extreme_low"
+            changes_list.append(ex_low)
         
-        return changes
+        return pd.concat(changes_list, axis=1) if changes_list else pd.DataFrame(index=quintile_df.index)
     
     def get_current_regimes(self, df: pd.DataFrame,
                            variables: Optional[List[str]] = None) -> pd.DataFrame:

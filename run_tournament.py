@@ -41,13 +41,13 @@ from evaluation import TimeSeriesCV, CrossValidator, compute_all_metrics, SHAPAn
 
 
 # Configure logging
-Path('experiments/logs').mkdir(parents=True, exist_ok=True)
+Path('experiments/tournament_logs').mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('experiments/logs/tournament.log')
+        # logging.FileHandler(f'experiments/tournament_logs/tournament_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ class ModelTournament:
             self.experiments_dir / 'shap',
             self.experiments_dir / 'regimes',
             self.experiments_dir / 'reports',
-            self.experiments_dir / 'logs',
+            self.experiments_dir / 'tournament_logs',
         ]
         for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
@@ -147,7 +147,11 @@ class ModelTournament:
         
         # Step 3.5: Generate quintile features
         logger.info("Step 3.5: Generating quintile features...")
-        quintiles = generate_all_quintile_features(stationary_levels)
+        # Combine raw data and ratios for quintile analysis
+        quintile_data = pd.concat([raw_data, ratios], axis=1)
+        # Remove duplicates
+        quintile_data = quintile_data.loc[:, ~quintile_data.columns.duplicated()]
+        quintiles = generate_all_quintile_features(quintile_data)
         
         # Step 4: Cointegration analysis
         logger.info("Step 4: Running cointegration analysis...")

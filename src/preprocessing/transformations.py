@@ -111,24 +111,32 @@ class FREDMDTransformer:
         Returns:
             Transformed DataFrame
         """
-        transformed = pd.DataFrame(index=df.index)
-        levels = pd.DataFrame(index=df.index) if preserve_levels else None
+        transformed_cols = []
+        levels_cols = []
         
         for col in df.columns:
             code = self.transform_codes.get(col, 1)
             
             try:
-                transformed[col] = self.transform_series(df[col], code)
+                s = self.transform_series(df[col], code)
+                s.name = col
+                transformed_cols.append(s)
                 
                 # Preserve levels for stationary series (code 1)
                 if preserve_levels and code == 1:
-                    levels[col] = df[col]
+                    l = df[col].copy()
+                    l.name = col
+                    levels_cols.append(l)
                     
             except Exception as e:
                 logger.warning(f"Error transforming {col}: {e}")
-                transformed[col] = np.nan
+                s = pd.Series(np.nan, index=df.index, name=col)
+                transformed_cols.append(s)
+        
+        transformed = pd.concat(transformed_cols, axis=1) if transformed_cols else pd.DataFrame(index=df.index)
         
         if preserve_levels:
+            levels = pd.concat(levels_cols, axis=1) if levels_cols else pd.DataFrame(index=df.index)
             return transformed, levels
         return transformed
     
@@ -349,7 +357,7 @@ def standardize_features(df: pd.DataFrame, method: str = 'zscore',
     Returns:
         Standardized DataFrame
     """
-    standardized = pd.DataFrame(index=df.index)
+    cols = []
     
     for col in df.columns:
         series = df[col]
@@ -361,7 +369,7 @@ def standardize_features(df: pd.DataFrame, method: str = 'zscore',
             else:
                 mean = series.rolling(window=window).mean()
                 std = series.rolling(window=window).std()
-            standardized[col] = (series - mean) / std.replace(0, np.nan)
+            s = (series - mean) / std.replace(0, np.nan)
             
         elif method == 'minmax':
             if window is None:
@@ -371,7 +379,7 @@ def standardize_features(df: pd.DataFrame, method: str = 'zscore',
                 min_val = series.rolling(window=window).min()
                 max_val = series.rolling(window=window).max()
             range_val = max_val - min_val
-            standardized[col] = (series - min_val) / range_val.replace(0, np.nan)
+            s = (series - min_val) / range_val.replace(0, np.nan)
             
         elif method == 'robust':
             if window is None:
@@ -380,12 +388,15 @@ def standardize_features(df: pd.DataFrame, method: str = 'zscore',
             else:
                 median = series.rolling(window=window).median()
                 iqr = series.rolling(window=window).quantile(0.75) - series.rolling(window=window).quantile(0.25)
-            standardized[col] = (series - median) / iqr.replace(0, np.nan)
+            s = (series - median) / iqr.replace(0, np.nan)
         
         else:
             raise ValueError(f"Unknown standardization method: {method}")
+            
+        s.name = col
+        cols.append(s)
     
-    return standardized
+    return pd.concat(cols, axis=1) if cols else pd.DataFrame(index=df.index)
 
 
 if __name__ == "__main__":

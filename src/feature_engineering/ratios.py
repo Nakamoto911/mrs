@@ -108,7 +108,7 @@ class MacroRatioGenerator:
         if categories is None:
             categories = list(self.ratios.keys())
         
-        ratios_df = pd.DataFrame(index=df.index)
+        outputs = []
         
         # First compute inflation for real rate calculations
         inflation_yoy = self._compute_yoy_inflation(df)
@@ -142,12 +142,14 @@ class MacroRatioGenerator:
                         # Simple difference (for rates/spreads)
                         ratio = num - denom
                     
-                    ratios_df[name] = ratio
+                    ratio.name = name
+                    outputs.append(ratio)
                     logger.debug(f"Generated ratio: {name}")
                     
                 except Exception as e:
                     logger.warning(f"Error computing {name}: {e}")
         
+        ratios_df = pd.concat(outputs, axis=1) if outputs else pd.DataFrame(index=df.index)
         logger.info(f"Generated {len(ratios_df.columns)} ratio features")
         return ratios_df
     
@@ -163,14 +165,15 @@ class MacroRatioGenerator:
         Returns:
             DataFrame with ratio change features
         """
-        changes_df = pd.DataFrame(index=ratios_df.index)
+        changes = []
         
         for col in ratios_df.columns:
             for window in windows:
                 change = ratios_df[col].diff(window)
-                changes_df[f"{col}_chg_{window}M"] = change
+                change.name = f"{col}_chg_{window}M"
+                changes.append(change)
         
-        return changes_df
+        return pd.concat(changes, axis=1) if changes else pd.DataFrame(index=ratios_df.index)
     
     def add_custom_ratio(self, category: str, numerator: str, denominator: str,
                          name: str, is_log_ratio: bool = True):
@@ -233,7 +236,7 @@ class SpreadCalculator:
         if categories is None:
             categories = list(self.spreads.keys())
         
-        spreads_df = pd.DataFrame(index=df.index)
+        outputs = []
         
         for category in categories:
             if category not in self.spreads:
@@ -244,9 +247,10 @@ class SpreadCalculator:
                     continue
                 
                 spread = df[long_rate] - df[short_rate]
-                spreads_df[name] = spread
+                spread.name = name
+                outputs.append(spread)
         
-        return spreads_df
+        return pd.concat(outputs, axis=1) if outputs else pd.DataFrame(index=df.index)
     
     def calculate_spread_changes(self, spreads_df: pd.DataFrame,
                                 windows: List[int] = [1, 3, 6]) -> pd.DataFrame:
@@ -260,13 +264,15 @@ class SpreadCalculator:
         Returns:
             DataFrame with spread change features
         """
-        changes_df = pd.DataFrame(index=spreads_df.index)
+        changes = []
         
         for col in spreads_df.columns:
             for window in windows:
-                changes_df[f"{col}_chg_{window}M"] = spreads_df[col].diff(window)
+                change = spreads_df[col].diff(window)
+                change.name = f"{col}_chg_{window}M"
+                changes.append(change)
         
-        return changes_df
+        return pd.concat(changes, axis=1) if changes else pd.DataFrame(index=spreads_df.index)
 
 
 def generate_all_ratio_features(df: pd.DataFrame,

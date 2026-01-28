@@ -43,8 +43,9 @@ class MomentumFeatureGenerator:
     
     def compute_rolling_zscore(self, series: pd.Series, window: int) -> pd.Series:
         """Compute rolling z-score."""
-        rolling_mean = series.rolling(window=window, min_periods=self.min_periods).mean()
-        rolling_std = series.rolling(window=window, min_periods=self.min_periods).std()
+        effective_min = min(window, self.min_periods)
+        rolling_mean = series.rolling(window=window, min_periods=effective_min).mean()
+        rolling_std = series.rolling(window=window, min_periods=effective_min).std()
         return (series - rolling_mean) / rolling_std.replace(0, np.nan)
     
     def generate_features(self, df: pd.DataFrame,
