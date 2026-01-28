@@ -9,8 +9,9 @@ Part of the Asset-Specific Macro Regime Detection System
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, RidgeCV, LassoCV, ElasticNetCV
+from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 import logging
 
@@ -41,11 +42,13 @@ class LinearModelWrapper:
         self.kwargs = kwargs
         self.model = None
         self.scaler = StandardScaler()
+        self.imputer = SimpleImputer(strategy='median')
         self.feature_names = None
+        self.selected_features = None
         
     def fit(self, X: pd.DataFrame, y: pd.Series) -> 'LinearModelWrapper':
         """
-        Fit the model.
+        Fit the model with robust preprocessing.
         
         Args:
             X: Feature DataFrame
@@ -56,26 +59,74 @@ class LinearModelWrapper:
         """
         self.feature_names = X.columns.tolist()
         
-        # Handle missing values
-        mask = ~(X.isna().any(axis=1) | y.isna())
-        X_clean = X.loc[mask]
-        y_clean = y.loc[mask]
+        # 1. Align features and target (remove NaNs from target first)
+        y_clean = y.dropna()
+        common_idx = X.index.intersection(y_clean.index)
+        X_sync = X.loc[common_idx]
+        y_sync = y_clean.loc[common_idx]
         
-        if len(X_clean) < 20:
-            raise ValueError("Insufficient data for fitting")
+        if len(y_sync) < 20:
+             raise ValueError(f"Insufficient total samples ({len(y_sync)}) for alignment")
         
-        # Scale features
-        X_scaled = self.scaler.fit_transform(X_clean)
+        # 2. Variance & Validity Filtering (remove constant and all-NaN features)
+        # Drop all-NaN columns first to avoid SimpleImputer issues
+        all_nan_features = X_sync.columns[X_sync.isna().all()].tolist()
+        if all_nan_features:
+            logger.debug(f"Removing {len(all_nan_features)} all-NaN features")
+            
+        variances = X_sync.drop(columns=all_nan_features).var()
+        constant_features = variances[variances == 0].index.tolist()
+        if constant_features:
+            logger.debug(f"Removing {len(constant_features)} constant features")
+            
+        initial_selected = [c for c in X_sync.columns if c not in all_nan_features and c not in constant_features]
+        X_filtered = X_sync[initial_selected]
         
-        # Fit model
+        # 3. Degrees of Freedom Guard: N > K + 20
+        # If K is too large, prune features by NaN count then variance
+        n_samples = len(X_filtered)
+        max_k = n_samples - 20
+        
+        if len(initial_selected) > max_k:
+            logger.debug(f"Pruning features to satisfy DOF: N={n_samples}, K_init={len(initial_selected)}, Max_K={max_k}")
+            
+            # Rank features by NaN count (ascending) and then Variance (descending)
+            nan_counts = X_filtered.isna().sum()
+            vars = X_filtered.var()
+            
+            ranking = pd.DataFrame({
+                'nan_count': nan_counts,
+                'variance': vars
+            }).sort_values(['nan_count', 'variance'], ascending=[True, False])
+            
+            self.selected_features = ranking.index[:max_k].tolist()
+            X_filtered = X_filtered[self.selected_features]
+            logger.debug(f"Successfully pruned to {len(self.selected_features)} features")
+        else:
+            self.selected_features = initial_selected
+            
+        if len(self.selected_features) == 0:
+            raise ValueError(f"No valid features remaining after pruning (N={n_samples})")
+
+        # 4. Median Imputation
+        X_imputed = pd.DataFrame(
+            self.imputer.fit_transform(X_filtered),
+            columns=self.selected_features,
+            index=X_filtered.index
+        )
+        
+        # 5. Scale features
+        X_scaled = self.scaler.fit_transform(X_imputed)
+        
+        # 6. Fit model
         self.model = self.MODELS[self.model_type](**self.kwargs)
-        self.model.fit(X_scaled, y_clean)
+        self.model.fit(X_scaled, y_sync)
         
         return self
     
     def predict(self, X: pd.DataFrame) -> pd.Series:
         """
-        Generate predictions.
+        Generate predictions using the same robust pipeline.
         
         Args:
             X: Feature DataFrame
@@ -86,17 +137,24 @@ class LinearModelWrapper:
         if self.model is None:
             raise ValueError("Model not fitted")
         
-        X_scaled = self.scaler.transform(X)
+        # Filter to selected features
+        X_filtered = X[self.selected_features]
+        
+        # Impute and Scale (handle potential new NaNs in predict data)
+        X_imputed_arr = self.imputer.transform(X_filtered)
+        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.selected_features, index=X.index)
+        X_scaled = self.scaler.transform(X_imputed)
+        
         predictions = self.model.predict(X_scaled)
         
         return pd.Series(predictions, index=X.index)
     
     def get_coefficients(self) -> pd.Series:
-        """Get model coefficients."""
+        """Get model coefficients for selected features."""
         if self.model is None:
             raise ValueError("Model not fitted")
         
-        return pd.Series(self.model.coef_, index=self.feature_names)
+        return pd.Series(self.model.coef_, index=self.selected_features)
     
     def get_feature_importance(self) -> pd.Series:
         """Get absolute coefficients as feature importance."""
@@ -172,7 +230,7 @@ class VECMWrapper:
 
 
 def create_linear_model(model_type: str, alpha: float = 1.0, 
-                       l1_ratio: float = 0.5) -> LinearModelWrapper:
+                       l1_ratio: float = 0.5, **kwargs) -> LinearModelWrapper:
     """
     Factory function for linear models.
     
@@ -180,16 +238,17 @@ def create_linear_model(model_type: str, alpha: float = 1.0,
         model_type: 'ridge', 'lasso', or 'elastic_net'
         alpha: Regularization strength
         l1_ratio: L1 ratio for elastic net
+        **kwargs: Additional parameters for the underlying model
         
     Returns:
         LinearModelWrapper instance
     """
     if model_type == 'ridge':
-        return LinearModelWrapper('ridge', alpha=alpha)
+        return LinearModelWrapper('ridge', alpha=alpha, **kwargs)
     elif model_type == 'lasso':
-        return LinearModelWrapper('lasso', alpha=alpha)
+        return LinearModelWrapper('lasso', alpha=alpha, **kwargs)
     elif model_type == 'elastic_net':
-        return LinearModelWrapper('elastic_net', alpha=alpha, l1_ratio=l1_ratio)
+        return LinearModelWrapper('elastic_net', alpha=alpha, l1_ratio=l1_ratio, **kwargs)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 

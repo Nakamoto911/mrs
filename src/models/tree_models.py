@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Any
 import logging
+from sklearn.impute import SimpleImputer
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class TreeModelWrapper:
         self.kwargs = kwargs
         self.model = None
         self.feature_names = None
+        self.imputer = SimpleImputer(strategy='median')
         
     def _create_model(self):
         """Create the underlying model."""
@@ -88,7 +90,9 @@ class TreeModelWrapper:
             except ImportError:
                 logger.warning("CatBoost not available, using RandomForest")
                 from sklearn.ensemble import RandomForestRegressor
-                return RandomForestRegressor(n_estimators=100, random_state=42)
+                # Filter kwargs for RF
+                rf_params = {k: v for k, v in self.kwargs.items() if k in ['n_estimators', 'max_depth', 'min_samples_split', 'min_samples_leaf', 'n_jobs', 'random_state']}
+                return RandomForestRegressor(**rf_params)
         
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
@@ -106,17 +110,35 @@ class TreeModelWrapper:
         """
         self.feature_names = X.columns.tolist()
         
-        # Handle missing values
-        mask = ~(X.isna().any(axis=1) | y.isna())
-        X_clean = X.loc[mask]
-        y_clean = y.loc[mask]
+        # 1. Align features and target
+        y_clean = y.dropna()
+        common_idx = X.index.intersection(y_clean.index)
+        X_sync = X.loc[common_idx]
+        y_sync = y_clean.loc[common_idx]
         
-        if len(X_clean) < 20:
-            raise ValueError("Insufficient data for fitting")
+        if len(y_sync) < 20:
+             raise ValueError(f"Insufficient total samples ({len(y_sync)}) for alignment")
+
+        # 2. Prune all-NaN features (critical for imputation)
+        all_nan_features = X_sync.columns[X_sync.isna().all()].tolist()
+        if all_nan_features:
+            logger.debug(f"Removing {len(all_nan_features)} all-NaN features")
+            
+        self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
+        X_filtered = X_sync[self.feature_names]
+        
+        # 3. Median Imputation
+        # Tree models can handle some missing data, but sklearn implementation often requires clean input
+        # We use median imputation to be safe and consistent
+        X_imputed_arr = self.imputer.fit_transform(X_filtered)
+        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X_filtered.index)
+        
+        if len(X_imputed) < 20:
+            raise ValueError(f"Insufficient data for fitting: {len(X_imputed)}")
         
         # Create and fit model
         self.model = self._create_model()
-        self.model.fit(X_clean, y_clean)
+        self.model.fit(X_imputed, y_sync)
         
         return self
     
@@ -133,8 +155,13 @@ class TreeModelWrapper:
         if self.model is None:
             raise ValueError("Model not fitted")
         
-        # Fill NaN for prediction (tree models can handle missing data)
-        X_filled = X.fillna(0)
+        # Filter features
+        X_filtered = X[self.feature_names]
+        
+        # Impute
+        X_imputed_arr = self.imputer.transform(X_filtered)
+        X_filled = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X.index)
+        
         predictions = self.model.predict(X_filled)
         
         return pd.Series(predictions, index=X.index)

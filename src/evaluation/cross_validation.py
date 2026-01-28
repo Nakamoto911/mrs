@@ -249,8 +249,10 @@ class CrossValidator:
         
         metrics = {}
         
-        # Information Coefficient (Spearman rank correlation)
-        ic, _ = spearmanr(y_true_clean, y_pred_clean)
+        if len(np.unique(y_true_clean)) > 1 and len(np.unique(y_pred_clean)) > 1:
+            ic, _ = spearmanr(y_true_clean, y_pred_clean)
+        else:
+            ic = 0.0  # Constant input results in zero correlation
         metrics['IC'] = ic
         
         # RMSE

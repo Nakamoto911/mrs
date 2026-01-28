@@ -62,12 +62,12 @@ class ModelTournament:
     
     MODEL_CONFIGS = {
         'ridge': {'type': 'linear', 'params': {'alpha': 1.0}},
-        'lasso': {'type': 'linear', 'params': {'alpha': 0.1}},
-        'elastic_net': {'type': 'linear', 'params': {'alpha': 0.5, 'l1_ratio': 0.5}},
-        'random_forest': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 6}},
-        'xgboost': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 6, 'learning_rate': 0.1}},
-        'lightgbm': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': -1, 'learning_rate': 0.1}},
-        'mlp': {'type': 'neural', 'params': {'hidden_layers': [64, 32], 'epochs': 100}},
+        'lasso': {'type': 'linear', 'params': {'alpha': 0.0001, 'max_iter': 100000}},
+        'elastic_net': {'type': 'linear', 'params': {'alpha': 0.0001, 'l1_ratio': 0.5, 'max_iter': 100000}},
+        'random_forest': {'type': 'tree', 'params': {'n_estimators': 20, 'max_depth': 4, 'n_jobs': 1}},
+        'xgboost': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
+        'lightgbm': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
+        'mlp': {'type': 'neural', 'params': {'hidden_layers': [64, 32], 'epochs': 50}},
     }
     
     def __init__(self, config_path: str = 'configs/experiment_config.yaml'):
@@ -214,14 +214,11 @@ class ModelTournament:
         
         for asset in self.ASSETS:
             try:
-                # Load prices (simplified - would use extended prices in production)
-                prices = pd.Series(dtype=float)  # Placeholder
+                # Load prices
+                prices = asset_loader.load_extended_prices(asset)
                 
-                # For testing, create synthetic target
-                if self.features is not None:
-                    # Use first feature as proxy
-                    first_col = self.features.columns[0]
-                    prices = self.features[first_col].cumsum() + 100
+                # Align dates to Start-of-Month to match FRED-MD features
+                prices.index = prices.index.to_period('M').to_timestamp()
                 
                 # Compute forward returns
                 returns = np.log(prices.shift(-horizon_months) / prices)
@@ -281,8 +278,11 @@ class ModelTournament:
         logger.info("STEP 2: MODEL TOURNAMENT")
         logger.info("=" * 60)
         
-        assets = assets or self.ASSETS
-        models = models or list(self.MODEL_CONFIGS.keys())
+        if assets is None or (len(assets) == 1 and assets[0].lower() == 'all'):
+            assets = self.ASSETS
+        
+        if models is None or (len(models) == 1 and models[0].lower() == 'all'):
+            models = list(self.MODEL_CONFIGS.keys())
         
         if self.features is None:
             raise ValueError("Features not loaded. Run feature pipeline first.")
@@ -312,10 +312,12 @@ class ModelTournament:
             
             y = self.targets[target_key]
             
-            # Align features and target
+            # Aligned features and target (LinearModelWrapper now handles PIT pruning)
             common_idx = self.features.index.intersection(y.dropna().index)
             X = self.features.loc[common_idx]
             y = y.loc[common_idx]
+            
+            logger.info(f"    Forwarding {len(X.columns)} features and {len(X)} samples to model layer")
             
             for model_name in models:
                 logger.info(f"  Training {model_name}...")
@@ -419,8 +421,14 @@ def main():
     tournament = ModelTournament()
     
     # Run feature pipeline
+    feature_file = tournament.experiments_dir / 'features' / f'features_{datetime.now().strftime("%Y%m%d")}.parquet'
+    
     if not args.eval_only:
-        tournament.run_feature_pipeline(args.fred_api_key)
+        if feature_file.exists():
+            logger.info(f"Features found at {feature_file}. Skipping generation.")
+            tournament.features = pd.read_parquet(feature_file)
+        else:
+            tournament.run_feature_pipeline(args.fred_api_key)
     
     if args.features_only:
         logger.info("Feature pipeline complete. Exiting.")

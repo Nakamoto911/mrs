@@ -45,21 +45,21 @@ LightGBM classifier predicts 6-month ahead regime probability using current macr
 ### 2.1 Competing Model Families
 
 **Linear Models:**
-- Ridge Regression — L2 penalty, interpretable coefficients
-- Lasso — L1 penalty, automatic feature selection
-- Elastic Net — L1+L2, handles correlated features
-- VECM — If cointegration detected, captures mean-reversion
+- Ridge Regression — L2 penalty, interpretable coefficients (Benchmark)
+- Lasso — L1 penalty with very weak regularization ($\alpha=0.0001$) to avoid zero-signal collapse in sparse regimes. Requires `max_iter=100,000` for convergence.
+- Elastic Net — L1+L2 ($\alpha=0.0001$, `l1_ratio=0.5`), handles correlated features. Requires `max_iter=100,000`.
+- VECM — If cointegration detected, captures mean-reversion.
 
 **Tree-Based Ensembles:**
-- Random Forest — Robust to overfitting, feature importance via Gini
-- XGBoost — State-of-the-art accuracy, handles non-linearities
-- LightGBM — Faster, better with large feature sets
-- CatBoost — Handles categorical features (regime indicators)
+- Random Forest — Robust to overfitting, feature importance via Gini. Configured with `n_jobs=1` to prevent deadlock, `n_estimators=20`, and `max_depth=4` for regularization.
+- XGBoost — State-of-the-art accuracy, handles non-linearities.
+- LightGBM — Faster, better with large feature sets.
+- CatBoost — Handles categorical features (regime indicators).
 
 **Neural Networks:**
-- Feedforward MLP — Multi-layer perceptron with dropout
-- LSTM — Temporal dependencies, 12–24 month sequences
-- Temporal Convolutional Network — Alternative to LSTM
+- Feedforward MLP — Multi-layer perceptron with dropout. Requires robust scaling and imputation to identical standards as linear models.
+- LSTM — Temporal dependencies, 12–24 month sequences.
+- Temporal Convolutional Network — Alternative to LSTM.
 
 ### 2.2 Hyperparameter Optimization
 
@@ -68,6 +68,15 @@ Optuna Bayesian optimization: 100 trials per model, 5-fold time-series CV
 - **Linear:** Regularization strength α, mixing parameter (Elastic Net)
 - **Tree-based:** Learning rate, max depth, min samples/leaf, n_estimators
 - **Neural Nets:** Layer sizes, dropout rate, learning rate, batch size
+
+### 2.3 Robust Training Layer
+
+To maintain estimation integrity across the high-dimensional (744-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):
+
+**Data Integrity Protocols:**
+- **Sparse Feature Imputation:** Median imputation applied to features with < 20% missingness. Series exceeding this threshold are pruned PIT (Point-In-Time) to prevent signal dilution. This applies to both linear models and tree-based/neural models which often fail with raw NaN inputs in small-N folds.
+- **Variance Filtering:** Automatic detection and exclusion of zero-variance or near-constant features that degrade `StandardScaler` performance.
+- **Degrees of Freedom Guard:** Hard requirement of $N > K + 20$ (samples > features + 20) for valid estimation. If violated in any CV fold, the system enforces **Automated PIT Feature Pruning**, ranking and keeping only the top $(N-20)$ features based on maximum data density (lowest NaNs) and secondarily by cross-sectional variance.
 
 ---
 

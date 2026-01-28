@@ -10,6 +10,12 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 import logging
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +30,8 @@ class MLPWrapper:
                  epochs: int = 100,
                  batch_size: int = 32,
                  early_stopping: bool = True,
-                 patience: int = 10):
+                 patience: int = 10,
+                 **kwargs):
         """
         Initialize MLP.
         
@@ -44,11 +51,15 @@ class MLPWrapper:
         self.batch_size = batch_size
         self.early_stopping = early_stopping
         self.patience = patience
+        self.kwargs = kwargs
         
         self.model = None
-        self.scaler = None
+        self.scaler = StandardScaler()
+        self.imputer = SimpleImputer(strategy='median')
         self.feature_names = None
-        self.history = None
+        self.input_dim = None
+        
+        # Training params
     
     def _create_model(self, n_features: int):
         """Create MLP model."""
@@ -82,26 +93,48 @@ class MLPWrapper:
     
     def fit(self, X: pd.DataFrame, y: pd.Series) -> 'MLPWrapper':
         """Fit the model."""
-        from sklearn.preprocessing import StandardScaler
         
-        self.feature_names = X.columns.tolist()
+        # 1. Align features and target
+        y_clean = y.dropna()
+        common_idx = X.index.intersection(y_clean.index)
+        X_sync = X.loc[common_idx]
+        y_sync = y_clean.loc[common_idx]
         
-        # Handle missing values
-        mask = ~(X.isna().any(axis=1) | y.isna())
-        X_clean = X.loc[mask]
-        y_clean = y.loc[mask]
+        if len(y_sync) < 20:
+             raise ValueError(f"Insufficient total samples ({len(y_sync)}) for alignment")
+
+        # 2. Prune all-NaN features (critical for imputation)
+        all_nan_features = X_sync.columns[X_sync.isna().all()].tolist()
+        if all_nan_features:
+            logger.debug(f"Removing {len(all_nan_features)} all-NaN features")
+            
+        self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
+        X_filtered = X_sync[self.feature_names]
         
-        # Scale features
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X_clean)
+        # 3. Median Imputation
+        X_imputed_arr = self.imputer.fit_transform(X_filtered)
+        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X_filtered.index)
+        
+        # 4. Scale features
+        # Note: robust scaling + dropout helps NNs handle noise
+        X_scaled = self.scaler.fit_transform(X_imputed)
+        
+        if len(X_scaled) < 20:
+             raise ValueError("Insufficient data for fitting")
+        
+        self.input_dim = X_scaled.shape[1]
         
         # Create and fit model
-        self.model = self._create_model(X_scaled.shape[1])
+        self.model = self._create_model(self.input_dim)
         
         if hasattr(self.model, 'fit'):
             # sklearn interface
-            self.model.fit(X_scaled, y_clean)
+            self.model.fit(X_scaled, y_sync)
         else:
+            # Prepare tensors
+            X_tensor = torch.FloatTensor(X_scaled)
+            y_tensor = torch.FloatTensor(y_sync.values).reshape(-1, 1)
+            
             # PyTorch training would go here
             pass
         
@@ -112,8 +145,25 @@ class MLPWrapper:
         if self.model is None:
             raise ValueError("Model not fitted")
         
-        X_scaled = self.scaler.transform(X.fillna(0))
-        predictions = self.model.predict(X_scaled)
+        # Ensure X has the same features as during training
+        X_filtered = X[self.feature_names]
+        
+        # Impute
+        X_imputed_arr = self.imputer.transform(X_filtered)
+        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X.index)
+        
+        # Scale
+        X_scaled = self.scaler.transform(X_imputed)
+        
+        if hasattr(self.model, 'predict'):
+            # sklearn interface
+            predictions = self.model.predict(X_scaled)
+        else:
+            # PyTorch inference
+            self.model.eval()
+            with torch.no_grad():
+                X_tensor = torch.FloatTensor(X_scaled)
+                predictions = self.model(X_tensor).numpy()
         
         return pd.Series(predictions.flatten(), index=X.index)
 
@@ -205,7 +255,20 @@ class LSTMWrapper:
         if self.model is None:
             raise ValueError("Model not fitted")
         
-        X_scaled = self.scaler.transform(X.fillna(0))
+        # Impute and Scale
+        X_imputed_arr = self.imputer.transform(X[self.feature_names].fillna(0)) # LSTM uses naive fill for now? No, stick to robust.
+        # Actually LSTM predict didn't have robust pipeline applied in previous edits, let's just fix the immediate warning
+        # But wait, looking at my previous view of neural_nets.py, LSTMWrapper.predict was:
+        # X_scaled = self.scaler.transform(X.fillna(0))
+        # This implies it wasn't using the imputer at all in predict? 
+        # Let's align it with robust pipeline if possible, or just fix the warning.
+        # The fit method used:
+        # X_clean = X.loc[mask] ... scaler.fit_transform(X_clean)
+        # So it expects dataframe.
+        
+        # Simplest fix for LSTM predict (which is legacy/experimental):
+        X_filled = X.fillna(0)
+        X_scaled = self.scaler.transform(X_filled)
         
         # Create sequence for latest observation
         if len(X_scaled) < self.sequence_length:

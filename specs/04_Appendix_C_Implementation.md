@@ -79,7 +79,7 @@ Real-time monitoring sheet (rank, feature, SHAP, current percentile, signal), al
 
 **Page 5: Data & Feature Inspector**
 
-Upload custom CSV option, feature matrix preview (first/last 10 rows), correlation heatmap, missing data report, stationarity test results, cointegration report with β coefficients
+Upload custom CSV option, feature matrix preview (first/last 10 rows), correlation heatmap, missing data report (PIT availability scores), stationarity test results, variance filtering logs, and **PIT pruning logs** (tracking automated feature selection per expansion window to satisfy degree-of-freedom constraints).
 
 ---
 
