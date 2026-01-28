@@ -1,0 +1,341 @@
+# Asset-Specific Macro Regime Detection System Configuration
+# Version 1.0 | January 27, 2026
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  # FRED-MD settings
+  fred_md:
+    url: "https://files.stlouisfed.org/files/htdocs/fred-md/monthly/current.csv"
+    transform_url: "https://files.stlouisfed.org/files/htdocs/fred-md/Appendix_Tables_Update.pdf"
+    n_variables: 128
+    categories:
+      - name: "Output/Income"
+        count: 17
+      - name: "Labor"
+        count: 32
+      - name: "Housing"
+        count: 10
+      - name: "Consumption/Orders"
+        count: 14
+      - name: "Money/Credit"
+        count: 14
+      - name: "Interest Rates/Spreads"
+        count: 22
+      - name: "Prices"
+        count: 21
+      - name: "Stock Market"
+        count: 3
+
+  # Asset configuration
+  assets:
+    SPX:
+      name: "S&P 500"
+      modern_ticker: "SPY"
+      modern_start: "1993-01-01"
+      historical_proxy: "SP500"
+      historical_start: "1959-01-01"
+    
+    BOND:
+      name: "10Y Treasury Bond"
+      modern_ticker: "IEF"
+      modern_start: "2002-07-01"
+      historical_proxy: "GS10"
+      historical_start: "1959-01-01"
+    
+    GOLD:
+      name: "Gold"
+      modern_ticker: "GLD"
+      modern_start: "2004-11-01"
+      historical_proxy: "GOLDAMGBD228NLBM"
+      historical_start: "1968-04-01"
+      cpi_proxy_start: "1959-01-01"
+
+  # ALFRED validation
+  alfred:
+    start_year: 2000
+    end_year: 2024
+    frequency: "semi-annual"  # 48 rebalancing periods
+    publication_lag_months: 1
+    api_base: "https://api.stlouisfed.org/fred"
+
+# =============================================================================
+# Feature Engineering Configuration
+# =============================================================================
+features:
+  # Stationarity tests
+  stationarity:
+    adf_significance: 0.05
+    kpss_significance: 0.05
+  
+  # FRED-MD transformation codes
+  transform_codes:
+    1: "no_transform"       # Stationary
+    2: "first_diff"         # Δx
+    5: "log_diff"           # Δlog(x) - Growth rate
+    6: "second_log_diff"    # Δ²log(x) - Acceleration
+
+  # Macro ratios to generate
+  ratios:
+    liquidity:
+      - ["M2SL", "GDP", "M2/GDP"]
+      - ["M2SL", "PI", "M2/Personal_Income"]
+      - ["BOGMBASE", "GDP", "Reserves/GDP"]
+    leverage:
+      - ["TCMDO", "GDP", "Total_Debt/GDP"]
+      - ["TOTALSL", "DSPIC96", "Consumer_Debt/DPI"]
+    real:
+      - ["GS10", "CPIAUCSL", "Real_10Y_Yield"]
+      - ["FEDFUNDS", "CPIAUCSL", "Real_Fed_Funds"]
+    valuation:
+      - ["SP500", "SP500_DIV", "PE_Ratio"]
+
+  # Quintile features
+  quintiles:
+    variables:
+      - "GS10"          # 10-Year Treasury
+      - "FEDFUNDS"      # Fed Funds Rate
+      - "TB3MS"         # 3-Month Treasury
+      - "BAA10Y"        # Credit Spread (BAA-10Y)
+      - "AAA10Y"        # Credit Spread (AAA-10Y)
+      - "VIXCLSx"       # VIX
+      - "UNRATE"        # Unemployment Rate
+      - "UMCSENT"       # Consumer Sentiment
+      - "HOUST"         # Housing Starts
+      - "M2REAL"        # Real M2
+    n_quintiles: 5
+    encoding: "one_hot"  # or "z_score_within_regime"
+
+  # Cointegration pairs (theory-driven)
+  cointegration:
+    pairs:
+      - ["GDPC1", "M2SL", "quantity_theory"]
+      - ["GS10", "CPIAUCSL", "fisher_hypothesis"]
+      - ["INDPRO", "PAYEMS", "okun_law"]
+      - ["HOUST", "MORTGAGE30US", "housing_rates"]
+      - ["SP500", "SP500_DIV", "gordon_growth"]
+    johansen_spec: "ci"  # restricted constant
+    significance: 0.05
+    max_lag: 12
+
+  # Momentum windows (months)
+  momentum_windows: [3, 6, 12]
+
+  # Cross-asset features
+  cross_asset:
+    correlation_windows: [6, 12]
+    pairs:
+      - ["SPX", "BOND"]
+      - ["SPX", "GOLD"]
+      - ["BOND", "GOLD"]
+
+  # Hierarchical clustering
+  clustering:
+    similarity_threshold: 0.80  # |correlation| > 0.80 = same cluster
+    linkage_method: "average"   # balance between single and complete
+    distance_metric: "correlation"
+    selection_method:
+      small_cluster: "univariate_ic"      # clusters 2-3 features
+      medium_cluster: "centroid"          # clusters 4-9 features
+      large_cluster: "centroid_validated" # clusters 10+ features
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+models:
+  # Target variables
+  targets:
+    returns:
+      horizon_months: 24
+      metric: "IC"
+    volatility:
+      horizon_months: 24
+      lookback_months: 6
+      metric: "RMSE"
+
+  # Linear models
+  linear:
+    ridge:
+      enabled: true
+      alpha_range: [0.001, 100]
+    lasso:
+      enabled: true
+      alpha_range: [0.001, 10]
+    elastic_net:
+      enabled: true
+      alpha_range: [0.001, 10]
+      l1_ratio_range: [0.1, 0.9]
+    vecm:
+      enabled: true
+      max_lag: 12
+      coint_rank: "auto"
+
+  # Tree-based models
+  tree:
+    random_forest:
+      enabled: true
+      n_estimators_range: [100, 500]
+      max_depth_range: [3, 15]
+      min_samples_leaf_range: [10, 50]
+    xgboost:
+      enabled: true
+      learning_rate_range: [0.01, 0.3]
+      max_depth_range: [3, 10]
+      n_estimators_range: [100, 500]
+      min_child_weight_range: [1, 10]
+      subsample_range: [0.6, 1.0]
+      colsample_bytree_range: [0.6, 1.0]
+    lightgbm:
+      enabled: true
+      learning_rate_range: [0.01, 0.3]
+      max_depth_range: [3, 12]
+      n_estimators_range: [100, 500]
+      num_leaves_range: [20, 100]
+    catboost:
+      enabled: true
+      learning_rate_range: [0.01, 0.3]
+      depth_range: [4, 10]
+      iterations_range: [100, 500]
+
+  # Neural networks
+  neural:
+    mlp:
+      enabled: true
+      hidden_layers_range: [1, 3]
+      hidden_units_range: [32, 256]
+      dropout_range: [0.1, 0.5]
+      learning_rate_range: [0.0001, 0.01]
+    lstm:
+      enabled: true
+      sequence_length: 24  # months
+      hidden_units_range: [32, 128]
+      n_layers_range: [1, 3]
+      dropout_range: [0.1, 0.5]
+      learning_rate_range: [0.0001, 0.01]
+    tcn:
+      enabled: false  # Optional
+      kernel_size_range: [2, 5]
+      n_filters_range: [32, 128]
+
+# =============================================================================
+# Regime Detection Configuration
+# =============================================================================
+regimes:
+  # Statistical Jump Model parameters
+  jump_model:
+    n_states: 2  # bullish, bearish
+    features: ["return", "volatility"]
+    volatility_lookback: 6  # months for realized vol
+    em_iterations: 100
+    convergence_threshold: 0.0001
+
+  # Regime forecasting
+  forecasting:
+    model: "lightgbm"
+    horizon_months: 6
+    probability_threshold: 0.5
+
+# =============================================================================
+# Validation Configuration
+# =============================================================================
+validation:
+  # Time-series cross-validation
+  cv:
+    min_train_months: 120  # 10 years minimum
+    validation_months: 12
+    step_months: 6  # semi-annual rebalancing
+    n_folds: "auto"  # depends on data length
+
+  # Hyperparameter optimization
+  optuna:
+    n_trials: 100
+    timeout_hours: null
+    sampler: "TPE"
+    pruner: "MedianPruner"
+    n_startup_trials: 10
+    n_warmup_steps: 5
+
+  # ALFRED validation
+  alfred:
+    deployment_criteria:
+      ic_realtime_min: 0.15
+      revision_risk_max: 0.30
+      feature_stability_min: 0.70
+
+# =============================================================================
+# Evaluation Metrics
+# =============================================================================
+metrics:
+  primary:
+    returns: "IC"  # Information Coefficient (Spearman rank correlation)
+    volatility: "RMSE"
+  secondary:
+    - "MAE"
+    - "R2_OOS"
+    - "hit_rate"
+    - "directional_mae"
+  
+  # Interpretation thresholds
+  thresholds:
+    ic_excellent: 0.30
+    ic_good: 0.20
+    ic_acceptable: 0.15
+    ic_minimum: 0.10
+
+# =============================================================================
+# Performance Benchmarks (Expected)
+# =============================================================================
+benchmarks:
+  SPX:
+    ic_revised: [0.20, 0.28]
+    ic_realtime: [0.15, 0.22]
+    revision_risk: [0.15, 0.25]
+  BOND:
+    ic_revised: [0.28, 0.35]
+    ic_realtime: [0.24, 0.30]
+    revision_risk: [0.10, 0.18]
+  GOLD:
+    ic_revised: [0.12, 0.20]
+    ic_realtime: [0.10, 0.16]
+    revision_risk: [0.15, 0.22]
+
+# =============================================================================
+# Execution Configuration
+# =============================================================================
+execution:
+  # Parallel processing
+  n_jobs: -1  # Use all available cores
+  backend: "loky"  # joblib backend
+  
+  # GPU settings (for neural networks)
+  use_gpu: false
+  gpu_device: 0
+  
+  # Memory management
+  chunk_size: 10000
+  cache_results: true
+  
+  # Logging
+  log_level: "INFO"
+  log_file: "experiments/logs/experiment.log"
+
+# =============================================================================
+# Output Configuration
+# =============================================================================
+output:
+  # File formats
+  features: "parquet"
+  models: "joblib"
+  results: "json"
+  shap: "npy"
+  reports: "excel"
+  
+  # Paths (relative to project root)
+  paths:
+    features: "experiments/features"
+    models: "experiments/models"
+    cv_results: "experiments/cv_results"
+    shap: "experiments/shap"
+    regimes: "experiments/regimes"
+    reports: "experiments/reports"
