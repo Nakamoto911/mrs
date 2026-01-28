@@ -13,7 +13,8 @@ import logging
 import pandas as pd
 import numpy as np
 import requests
-import yfinance as yf
+# import yfinance as yf
+from yahooquery import Ticker
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,23 +22,21 @@ from typing import Dict, List, Optional
 from io import StringIO
 import re
 
-try:
-    from fredapi import Fred
-except ImportError:
-    Fred = None
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Fix yfinance cache issue by setting local cache dir
-try:
-    import tempfile
-    cache_dir = Path(tempfile.gettempdir()) / "yfinance_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    yf.set_tz_cache_location(str(cache_dir))
-except Exception as e:
-    logger.warning(f"Failed to set yfinance cache: {e}")
+# yfinance removed
+# try:
+#     import tempfile
+#     cache_dir = Path(tempfile.gettempdir()) / "yfinance_cache"
+#     cache_dir.mkdir(parents=True, exist_ok=True)
+#     yf.set_tz_cache_location(str(cache_dir))
+# except Exception as e:
+#     logger.warning(f"Failed to set yfinance cache: {e}")
 
 
 class DataAcquisitionOrchestrator:
@@ -57,36 +56,32 @@ class DataAcquisitionOrchestrator:
             'name': 'S&P 500',
             'modern_ticker': 'SPY',
             'modern_start': '1993-01-01',
-            'fred_series': 'SP500',
+            'proxy_col': 'S&P 500', 
             'dividend_series': 'SPDYLD',
         },
         'BOND': {
             'name': '10Y Treasury Bond',
             'modern_ticker': 'IEF',
             'modern_start': '2002-07-01',
-            'fred_series': 'GS10',
-            'duration': 8.5,
+            'proxy_col': 'GS10', 
+            'duration': 7.5,
         },
         'GOLD': {
             'name': 'Gold',
             'modern_ticker': 'GLD',
             'modern_start': '2004-11-01',
-            'fred_series': 'GOLDAMGBD228NLBM',
+            'proxy_col': 'PPICMM', 
             'cpi_series': 'CPIAUCSL',
         }
     }
-
-    def __init__(self, output_dir: str = "data/raw", fred_api_key: Optional[str] = None):
+    
+    def __init__(self, output_dir: str = "data/raw"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.vintages_dir = self.output_dir / "vintages"
         self.vintages_dir.mkdir(exist_ok=True)
+        self.fred_md_path = self.output_dir / "fred_md.csv"
         
-        self.fred_api_key = fred_api_key or os.getenv('FRED_API_KEY')
-        self.fred = Fred(api_key=self.fred_api_key) if self.fred_api_key and Fred else None
-        
-        if not self.fred and Fred:
-            logger.warning("FRED API key not found. Historical asset proxies requiring FRED might fail if not publicly available.")
 
     def _discover_current_fred_md_url(self) -> str:
         """Scrape the McCracken research page to find the latest current.csv URL."""
@@ -197,95 +192,122 @@ class DataAcquisitionOrchestrator:
             except Exception:
                 pass
 
-    def _load_historical_proxy(self, asset: str, start: str = '1959-01-01') -> pd.Series:
-        """Fetch historical proxy data from FRED."""
-        if not self.fred:
-            raise ValueError("FRED API key required for historical proxies")
-            
-        config = self.ASSETS[asset]
-        logger.info(f"Fetching historical proxy for {asset}...")
-        
-        if asset == 'SPX':
-            # S&P 500
-            s = self.fred.get_series(config['fred_series'], observation_start=start)
-            return s.resample('ME').last()
-            
-        elif asset == 'BOND':
-            # Construct total return from yield
-            yields = self.fred.get_series(config['fred_series'], observation_start=start)
-            yields = yields.resample('ME').last() / 100
-            
-            duration = config['duration']
-            yield_change = yields.diff()
-            monthly_ret = yields/12 - duration * yield_change
-            monthly_ret = monthly_ret.fillna(yields/12)
-            
-            price_index = (1 + monthly_ret).cumprod() * 100
-            return price_index
-            
-        elif asset == 'GOLD':
-            gold_start = '1968-04-01'
-            gold = self.fred.get_series(config['fred_series'], observation_start=gold_start)
-            gold = gold.resample('ME').last()
-            
-            if start < gold_start:
-                cpi = self.fred.get_series(config['cpi_series'], observation_start=start, observation_end='1968-03-31')
-                cpi = cpi.resample('ME').last()
-                scale = gold.iloc[0] / cpi.iloc[-1]
-                gold = pd.concat([cpi * scale, gold])
-            return gold
+
             
         return pd.Series()
 
+    def _load_fred_md_proxies(self) -> pd.DataFrame:
+        """Load and calculate proxy series from the local FRED-MD csv."""
+        if not self.fred_md_path.exists():
+             logger.warning("FRED-MD file not found. Cannot load proxies.")
+             return pd.DataFrame()
+             
+        try:
+            # Read FRED-MD, skipping the second row (transform codes)
+            df = pd.read_csv(self.fred_md_path)
+            # FRED-MD usually has a transform row at index 0 (line 2)
+            # We want to keep correct headers, but skip that row
+            # If 'sasdate' is in columns, transformations are likely in row 0
+            if 'sasdate' in df.columns:
+                 df = df.iloc[1:]
+                 date_col = 'sasdate'
+            else:
+                 date_col = 'Unnamed: 0'
+                 
+            df['date'] = pd.to_datetime(df[date_col], errors='coerce', utc=True)
+            df.dropna(subset=['date'], inplace=True)
+            df.set_index('date', inplace=True)
+            # Make index timezone naive to match yahoo
+            df.index = df.index.tz_localize(None)
+            
+            proxies = pd.DataFrame(index=df.index)
+            
+            # 1. SPX Proxy (S&P 500)
+            if 'S&P 500' in df.columns:
+                 proxies['SPX'] = pd.to_numeric(df['S&P 500'], errors='coerce')
+            
+            # 2. BOND Proxy (Synthetic from GS10)
+            if 'GS10' in df.columns:
+                yields = pd.to_numeric(df['GS10'], errors='coerce') / 100
+                duration = 7.5
+                carry = yields.shift(1) / 12
+                # Bond Price Change ~= -Duration * Change in Yield
+                price_change = -duration * (yields - yields.shift(1))
+                bond_ret = (carry + price_change).fillna(0)
+                # This is monthly return. Construct Price Index.
+                proxies['BOND'] = (1 + bond_ret).cumprod() * 100
+                
+            # 3. GOLD Proxy (PPICMM)
+            if 'PPICMM' in df.columns:
+                proxies['GOLD'] = pd.to_numeric(df['PPICMM'], errors='coerce')
+                
+            return proxies
+            
+        except Exception as e:
+            logger.warning(f"Failed to load FRED-MD proxies: {e}")
+            return pd.DataFrame()
+
     def fetch_asset_prices(self) -> None:
         """Fetch modern data from Yahoo and splice with historical proxies."""
+        # Pre-load proxies from FRED-MD
+        fred_proxies = self._load_fred_md_proxies()
+        
         all_prices = {}
         
         for asset, config in self.ASSETS.items():
             logger.info(f"Processing {asset}...")
             
-            # 1. Modern Data
+            # 1. Modern Data (YahooQuery)
             try:
-                modern = yf.download(config['modern_ticker'], start=config['modern_start'], progress=False)
-                if not modern.empty:
-                    modern = modern['Adj Close'].resample('ME').last()
+                # Use yahooquery Ticker which is more robust
+                t = Ticker(config['modern_ticker'], asynchronous=False)
+                # Fetch history
+                df_hist = t.history(start=config['modern_start'], interval='1d')
+                
+                if not df_hist.empty:
+                    # yahooquery returns a multi-index (symbol, date) or just date if single symbol
+                    # reset index to handle easily
+                    df = df_hist.reset_index()
+                    
+                    # Ensure 'date' is datetime
+                    if 'date' in df.columns:
+                        df['date'] = pd.to_datetime(df['date'])
+                        df = df.set_index('date')
+                    elif 'index' in df.columns: # Sometimes it returns 'index' if not named
+                        df['index'] = pd.to_datetime(df['index']) 
+                        df = df.set_index('index')
+                        
+                    # Filter just adjclose
+                    if 'adjclose' in df.columns:
+                         modern = df['adjclose']
+                    elif 'close' in df.columns:
+                         modern = df['close']
+                    else:
+                         modern = pd.Series()
+                    
+                    # Resample to monthly end
+                    modern = modern.resample('ME').last()
                     modern.name = asset
                 else:
-                    logger.warning(f"No modern data for {asset}")
+                    logger.warning(f"No modern data for {asset} (empty dataframe)")
                     modern = None
             except Exception as e:
                 logger.warning(f"Failed to fetch Yahoo data for {asset}: {e}")
                 modern = None
                 
-            # 2. Historical Proxy
+            # 2. Historical Proxy (Load from FRED-MD)
             historical = None
-            try:
-                if self.fred:
-                    historical = self._load_historical_proxy(asset)
-                    historical.name = asset
-            except Exception as e:
-                logger.warning(f"Failed to fetch historical proxy for {asset}: {e}")
+            if asset in fred_proxies.columns:
+                historical = fred_proxies[asset]
+                historical = historical.dropna()
+                historical.name = asset
+            else:
+                 logger.warning(f"Proxy for {asset} not found in FRED-MD data.")
             
             # 3. Splice or Fallback
             final_series = None
             
-            # Fallback to FRED for modern data if Yahoo failed (since SP500, GS10 are on FRED)
-            if modern is None and self.fred:
-                logger.info(f"Falling back to FRED for modern data for {asset}...")
-                try:
-                    if asset == 'SPX':
-                         # SP500 is daily on FRED
-                         modern = self.fred.get_series('SP500', observation_start=config['modern_start'])
-                         modern = modern.resample('ME').last()
-                         modern.name = asset
-                    elif asset == 'BOND':
-                         # GS10 is monthly
-                         modern_yields = self.fred.get_series('GS10', observation_start=config['modern_start'])
-                         # We need price index. Re-use historical proxy logic but for modern period?
-                         # Or just assume we have the proxy for the full period if we used FRED
-                         pass 
-                except Exception as e:
-                     logger.warning(f"FRED fallback failed for {asset}: {e}")
+            # (Fallback to FRED-MD logic is implicitly covered by historical proxy)
 
             # If we still rely on the historical proxy which comes from FRED and covers 'modern' times mostly
             # (e.g. SP500 on FRED is up to date).
@@ -294,6 +316,8 @@ class DataAcquisitionOrchestrator:
             if modern is not None and historical is not None:
                 # Splice logic
                 overlap_start = modern.index[0]
+                logger.info(f"  Splice for {asset}: {overlap_start.strftime('%Y-%m')} (Modern data starts here, previous is FRED proxy)")
+                
                 if overlap_start in historical.index:
                     hist_val = historical.asof(overlap_start)
                     scale = modern.iloc[0] / hist_val
@@ -305,9 +329,10 @@ class DataAcquisitionOrchestrator:
                 else:
                     final_series = modern 
             elif modern is not None:
+                logger.info(f"  Using Yahoo modern data only for {asset} (no historical proxy)")
                 final_series = modern
             elif historical is not None:
-                # Use historical as is (it might be full history if FRED has it)
+                logger.info(f"  Using FRED historical proxy only for {asset} (no modern data)")
                 final_series = historical
             
             if final_series is not None:
@@ -339,14 +364,7 @@ class DataAcquisitionOrchestrator:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Acquire macro and asset data.")
     parser.add_argument("--output", type=str, default="data/raw", help="Output directory")
-    parser.add_argument("--fred-key", type=str, default=None, help="FRED API Key")
     args = parser.parse_args()
     
-    # Load environment variables from .env file
-    load_dotenv()
-            
-    # Priority: CLI arg > Env Var
-    api_key = args.fred_key or os.getenv('FRED_API_KEY')
-    
-    orchestrator = DataAcquisitionOrchestrator(output_dir=args.output, fred_api_key=api_key)
+    orchestrator = DataAcquisitionOrchestrator(output_dir=args.output)
     orchestrator.run()

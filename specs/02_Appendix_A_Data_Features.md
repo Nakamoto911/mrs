@@ -30,9 +30,9 @@
 
 | Asset | Modern Data | Historical Proxy | Method |
 |---|---|---|---|
-| S&P 500 | SPY (1993+) | FRED S&P 500 + Div Yield | Splice, normalize at overlap |
-| 10Y Bond | IEF (2002+) | FRED 10Y CMT + Duration calc | Total return construction |
-| Gold | GLD (2004+) | FRED Gold Price (1968+) + CPI proxy (1959–67) | Chained indices |
+| S&P 500 | SPY (1993+) | FRED-MD `S&P 500` | Spliced at overlap |
+| 10Y Bond | IEF (2002+) | FRED-MD `GS10` (Synthetic Return) | Yield-to-Return conversion |
+| Gold | GLD (2004+) | FRED-MD `PPICMM` (PPI Metals) | Proxy Splicing |
 
 ---
 
@@ -88,7 +88,11 @@ Automated pipeline: ~600 raw features → ~250–300 cluster representatives
     - Fetch FRED-MD current vintage
     - Fetch FRED-MD historical vintages (for validation)
     - Fetch Asset Prices & Calculate Returns
-    - Extend to 1959 using FRED proxies (consistent with Section 1.2)
+    - Extend to 1959 using FRED-MD proxies (consistent with Section 1.2)
+    - **Proxy Strategy:**
+        - **Equity:** Uses `S&P 500` column from FRED-MD.
+        - **Bonds:** Synthetic returns calculated from `GS10` (10-Year Yield).
+        - **Gold:** Uses `PPICMM` (Producer Price Index: Metals) as a long-term proxy.
     - Save raw data to proper CSV format
 - **Result:** ~792 months of data (Jan 1959 – present) ready for loading
 

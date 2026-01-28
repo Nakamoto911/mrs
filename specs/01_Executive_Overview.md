@@ -97,7 +97,7 @@ For 5-year horizons with semi-annual rebalancing: 12M too short for structural t
 
 ### Stage 1: Data Acquisition & Feature Engineering
 
-Download FRED-MD (128 variables) + ETF prices via independent `data_acquisition.py` script. Save to human-readable CSVs. Extend to 1959 using FRED proxies. Generate ~600 features through 7-step pipeline. Apply hierarchical clustering @ 0.80 threshold. Result: ~250–300 cluster representatives. **Time:** 5–10 min for data update, 15–20 min for feature engineering. *(See Appendix A for complete details)*
+Download FRED-MD (128 variables) + ETF prices via independent `data_acquisition.py` script. Save to human-readable CSVs. Extend asset history to 1959 using spliced FRED-MD proxies (`S&P 500`, `GS10`, `PPICMM`). Generate ~600 features through 7-step pipeline. Apply hierarchical clustering @ 0.80 threshold. Result: ~250–300 cluster representatives. **Time:** 5–10 min for data update, 15–20 min for feature engineering. *(See Appendix A for complete details)*
 
 ### Stage 2: Asset-Specific Regime Detection
 
