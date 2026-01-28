@@ -18,6 +18,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Robust path resolution
+APP_DIR = Path(__file__).parent.absolute()
+if APP_DIR.name == "streamlit_app":
+    PROJECT_ROOT = APP_DIR.parent
+else:
+    PROJECT_ROOT = APP_DIR
+
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+
 # Custom CSS
 st.markdown("""
 <style>
@@ -40,32 +49,31 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def load_sample_data():
-    """Load sample data for demonstration."""
-    np.random.seed(42)
+def load_tournament_results():
+    """Load real tournament results."""
+    # Streamlit runs from the root usually
+    results_path = EXPERIMENTS_DIR / "cv_results" / "tournament_results.csv"
     
-    # Sample monitoring data
-    monitoring_data = pd.DataFrame({
-        'Rank': [1, 2, 3, 4, 5],
-        'Feature': ['M2/GDP Ratio', 'Real 10Y Yield', 'Credit Spread (BAA-10Y)', 
-                   'VIX Level', 'IP Growth'],
-        'SHAP': [0.42, 0.38, 0.31, 0.24, 0.19],
-        'Current_Value': [0.85, 1.2, 1.8, 18.5, 2.1],
-        'Percentile': [85, 50, 15, 45, 30],
-        'Signal': ['↑ Bullish', '→ Neutral', '↑ Bullish', '→ Neutral', '↓ Bearish']
-    })
-    
-    # Sample model results
-    model_results = pd.DataFrame({
-        'Asset': ['SPX', 'SPX', 'SPX', 'BOND', 'BOND', 'BOND', 'GOLD', 'GOLD', 'GOLD'],
-        'Model': ['XGBoost', 'Ridge', 'LightGBM'] * 3,
-        'IC_mean': [0.28, 0.22, 0.26, 0.32, 0.30, 0.31, 0.16, 0.14, 0.15],
-        'IC_std': [0.08, 0.06, 0.07, 0.05, 0.04, 0.05, 0.06, 0.05, 0.06],
-        'RMSE': [0.12, 0.14, 0.13, 0.08, 0.09, 0.085, 0.15, 0.16, 0.155],
-        'Hit_Rate': [0.62, 0.58, 0.61, 0.68, 0.65, 0.67, 0.55, 0.53, 0.54]
-    })
-    
-    return monitoring_data, model_results
+    if results_path.exists():
+        df = pd.read_csv(results_path)
+        # Standardize columns
+        df = df.rename(columns={
+            'asset': 'Asset',
+            'model': 'Model',
+            'hit_rate_mean': 'Hit_Rate'
+        })
+        if 'RMSE_mean' in df.columns:
+            df = df.rename(columns={'RMSE_mean': 'RMSE'})
+        return df
+    return pd.DataFrame()
+
+
+def load_monitoring_data(asset_code):
+    """Load monitoring data for a specific asset."""
+    path = EXPERIMENTS_DIR / "reports" / f"{asset_code}_monitoring.csv"
+    if path.exists():
+        return pd.read_csv(path)
+    return pd.DataFrame()
 
 
 def main():
@@ -98,7 +106,7 @@ def main():
                 import subprocess
                 import sys
                 # Use the same python interpreter as the running process
-                cmd = [sys.executable, "src/preprocessing/data_acquisition.py"]
+                cmd = [sys.executable, str(PROJECT_ROOT / "src/preprocessing/data_acquisition.py")]
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 
                 if result.returncode == 0:
@@ -113,12 +121,15 @@ def main():
                 st.sidebar.error(f"Error: {str(e)}")
     
     # Load data
-    monitoring_data, model_results = load_sample_data()
+    model_results = load_tournament_results()
     
     if page == "🎯 Dominant Drivers":
-        show_dominant_drivers(monitoring_data)
+        show_dominant_drivers()
     elif page == "📈 Model Comparison":
-        show_model_comparison(model_results)
+        if model_results.empty:
+            st.warning("No tournament results found. Run the tournament first.")
+        else:
+            show_model_comparison(model_results)
     elif page == "🔍 Feature Explorer":
         show_feature_explorer()
     elif page == "⚙️ Experiment Config":
@@ -127,22 +138,50 @@ def main():
         show_data_inspector()
 
 
-def show_dominant_drivers(monitoring_data):
+def show_dominant_drivers():
     """Show dominant drivers monitoring page."""
     st.header("🎯 Dominant Drivers Monitoring")
     
     # Asset selection
-    asset = st.selectbox("Select Asset", ["S&P 500 (SPX)", "10Y Bond (BOND)", "Gold (GOLD)"])
+    asset_map = {
+        "S&P 500 (SPX)": "SPX",
+        "10Y Bond (BOND)": "BOND",
+        "Gold (GOLD)": "GOLD"
+    }
+    selected_asset_label = st.selectbox("Select Asset", list(asset_map.keys()))
+    asset_code = asset_map[selected_asset_label]
     
+    monitoring_data = load_monitoring_data(asset_code)
+    
+    if monitoring_data.empty:
+        st.warning(f"No monitoring data found for {asset_code}. Run the tournament first.")
+        return
+        
     # Current regime summary
     col1, col2, col3 = st.columns(3)
     
+    # Simple heuristic for regime for demo purposes
+    bullish_count = sum('High' in s for s in monitoring_data['Signal'])
+    bearish_count = sum('Low' in s for s in monitoring_data['Signal'])
+    
+    if bullish_count > bearish_count:
+        regime = "Bullish"
+        delta = f"↑ {bullish_count} bullish drivers"
+    elif bearish_count > bullish_count:
+        regime = "Bearish"
+        delta = f"↓ {bearish_count} bearish drivers"
+    else:
+        regime = "Neutral"
+        delta = "→ Balanced signals"
+        
     with col1:
-        st.metric("Current Regime", "Cautiously Bullish", "↑ 2 bullish drivers")
+        st.metric("Current Regime", regime, delta)
     with col2:
-        st.metric("Regime Probability", "68%", "+5% from last month")
+        # Placeholder for real regime probability
+        prob = 50 + (bullish_count - bearish_count) * 5
+        st.metric("Regime Probability", f"{min(99, max(1, prob))}%")
     with col3:
-        st.metric("Confidence", "High", "Based on 5 dominant drivers")
+        st.metric("Confidence", "High" if len(monitoring_data) >= 5 else "Medium", f"Based on {len(monitoring_data)} drivers")
     
     st.markdown("---")
     
@@ -157,15 +196,11 @@ def show_dominant_drivers(monitoring_data):
             return 'color: red; font-weight: bold'
         return 'color: orange'
     
-    styled_df = monitoring_data.style.applymap(
+    styled_df = monitoring_data.style.map(
         color_signal, subset=['Signal']
-    ).format({
-        'SHAP': '{:.2f}',
-        'Current_Value': '{:.2f}',
-        'Percentile': '{:.0f}th'
-    })
+    )
     
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width='stretch', hide_index=True)
     
     # Interpretation
     st.info("""
@@ -190,7 +225,7 @@ def show_dominant_drivers(monitoring_data):
         }
     )
     fig.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def show_model_comparison(model_results):
@@ -215,7 +250,7 @@ def show_model_comparison(model_results):
             'RMSE': '{:.3f}',
             'Hit_Rate': '{:.1%}'
         }).background_gradient(subset=['IC_mean'], cmap='Greens'),
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
     
@@ -231,7 +266,7 @@ def show_model_comparison(model_results):
         text_auto='.2f'
     )
     fig.update_layout(height=300)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Best model per asset
     st.subheader("Best Model per Asset")
@@ -251,22 +286,29 @@ def show_feature_explorer():
     """Show feature importance explorer."""
     st.header("🔍 Feature Importance Explorer")
     
+    # Asset selection
+    asset_map = {
+        "S&P 500 (SPX)": "SPX",
+        "10Y Bond (BOND)": "BOND",
+        "Gold (GOLD)": "GOLD"
+    }
+    selected_asset_label = st.selectbox("Select Asset for Feature Analysis", list(asset_map.keys()))
+    asset_code = asset_map[selected_asset_label]
+    
+    monitoring_data = load_monitoring_data(asset_code)
+    
+    if monitoring_data.empty:
+        st.warning(f"No feature data found for {asset_code}.")
+        return
+
     # Tabs for different views
     tab1, tab2, tab3 = st.tabs(["Overall", "Bullish Regime", "Bearish Regime"])
     
-    # Sample feature importance data
-    np.random.seed(42)
-    features = [f"Feature_{i}" for i in range(20)]
-    importance = np.random.exponential(0.1, 20)
-    importance = np.sort(importance)[::-1]
-    
-    feature_df = pd.DataFrame({
-        'Feature': features,
-        'Importance': importance
-    })
+    feature_df = monitoring_data[['Feature', 'SHAP']].copy()
+    feature_df = feature_df.rename(columns={'SHAP': 'Importance'})
     
     with tab1:
-        st.subheader("Overall Feature Importance")
+        st.subheader("Top Dominant Drivers (SHAP)")
         fig = px.bar(
             feature_df.head(15), 
             x='Importance', 
@@ -274,34 +316,34 @@ def show_feature_explorer():
             orientation='h'
         )
         fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with tab2:
         st.subheader("Bullish Regime Feature Importance")
-        # Shuffle for demo
-        bullish_df = feature_df.sample(frac=1, random_state=1).head(15)
+        st.info("Regime-specific SHAP analysis requires saved regime-conditional models.")
+        # Fallback to overall for now but with green color
         fig = px.bar(
-            bullish_df,
+            feature_df.head(10),
             x='Importance',
             y='Feature', 
             orientation='h',
             color_discrete_sequence=['green']
         )
         fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with tab3:
         st.subheader("Bearish Regime Feature Importance")
-        bearish_df = feature_df.sample(frac=1, random_state=2).head(15)
+        st.info("Regime-specific SHAP analysis requires saved regime-conditional models.")
         fig = px.bar(
-            bearish_df,
+            feature_df.head(10),
             x='Importance',
             y='Feature',
             orientation='h',
             color_discrete_sequence=['red']
         )
         fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 
 def show_experiment_config():
@@ -364,20 +406,26 @@ def show_data_inspector():
     
     tab1, tab2, tab3 = st.tabs(["Feature Matrix", "Correlation Heatmap", "Missing Data"])
     
-    # Sample feature data
-    np.random.seed(42)
-    dates = pd.date_range('2020-01-01', periods=60, freq='ME')
-    sample_features = pd.DataFrame({
-        'M2_GDP_Ratio': np.random.randn(60).cumsum() + 0.8,
-        'Real_10Y_Yield': np.random.randn(60) * 0.5 + 1.5,
-        'Credit_Spread': np.random.randn(60) * 0.3 + 2,
-        'VIX': np.abs(np.random.randn(60)) * 5 + 15,
-        'IP_Growth': np.random.randn(60) * 2 + 1,
-    }, index=dates)
+    # Try to load real features
+    feature_files = sorted(list((EXPERIMENTS_DIR / "features").glob("features_*.parquet")))
+    if feature_files:
+        sample_features = pd.read_parquet(feature_files[-1])
+        st.success(f"Loaded features from {feature_files[-1]}")
+    else:
+        # Sample feature data fallback
+        np.random.seed(42)
+        dates = pd.date_range('2020-01-01', periods=60, freq='ME')
+        sample_features = pd.DataFrame({
+            'M2_GDP_Ratio': np.random.randn(60).cumsum() + 0.8,
+            'Real_10Y_Yield': np.random.randn(60) * 0.5 + 1.5,
+            'Credit_Spread': np.random.randn(60) * 0.3 + 2,
+            'VIX': np.abs(np.random.randn(60)) * 5 + 15,
+            'IP_Growth': np.random.randn(60) * 2 + 1,
+        }, index=dates)
     
     with tab1:
         st.subheader("Feature Matrix Preview")
-        st.dataframe(sample_features.head(10), use_container_width=True)
+        st.dataframe(sample_features.head(10), width='stretch')
         
         st.download_button(
             "Download Features CSV",
@@ -397,7 +445,7 @@ def show_data_inspector():
             text_auto='.2f',
             zmin=-1, zmax=1
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with tab3:
         st.subheader("Missing Data Report")
@@ -416,7 +464,7 @@ def show_data_inspector():
             'Missing %': missing_pct.values
         })
         
-        st.dataframe(missing_df, use_container_width=True, hide_index=True)
+        st.dataframe(missing_df, width='stretch', hide_index=True)
 
 
 if __name__ == "__main__":

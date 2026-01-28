@@ -325,9 +325,12 @@ class ModelTournament:
                 try:
                     start = time.time()
                     
+                    # Train model
+                    model = self.train_model(model_name, X, y)
+                    
                     # Cross-validation
                     result = validator.evaluate(
-                        self.train_model(model_name, X, y),
+                        model,
                         X, y,
                         model_name=model_name,
                         asset=asset,
@@ -352,7 +355,7 @@ class ModelTournament:
                     
                     # Save model
                     model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
-                    # joblib.dump(model, model_path)  # Would save actual model
+                    joblib.dump(model, model_path)
                     
                 except Exception as e:
                     logger.error(f"    Error training {model_name}: {e}")
@@ -400,6 +403,40 @@ class ModelTournament:
             f.write(best_models.to_string())
         
         logger.info(f"Report saved to {report_path}")
+        
+        # Generate SHAP monitoring for winners
+        logger.info("Generating SHAP monitoring for winners...")
+        for _, row in best_models.iterrows():
+            asset = row['asset']
+            model_name = row['model']
+            
+            model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
+            if model_path.exists():
+                try:
+                    model = joblib.load(model_path)
+                    
+                    # Get data (need to prepare it if not available)
+                    if self.features is not None:
+                        target_key = f'{asset}_return'
+                        y = self.targets.get(target_key)
+                        if y is not None:
+                            common_idx = self.features.index.intersection(y.dropna().index)
+                            X = self.features.loc[common_idx]
+                            
+                            # Compute SHAP
+                            analyzer = SHAPAnalyzer(n_top_features=10)
+                            model_type = 'tree' if any(t in model_name for t in ['forest', 'boost', 'gbm']) else 'linear'
+                            analyzer.compute_shap_values(model, X, model_type=model_type)
+                            
+                            # Save SHAP
+                            np.save(self.experiments_dir / 'shap' / f'{asset}_{model_name}_shap.npy', analyzer.shap_values)
+                            
+                            # Save Monitoring
+                            monitoring_sheet = analyzer.generate_monitoring_sheet(X)
+                            monitoring_sheet.to_csv(self.experiments_dir / 'reports' / f'{asset}_monitoring.csv', index=False)
+                            logger.info(f"Generated monitoring for {asset}")
+                except Exception as e:
+                    logger.error(f"Error generating SHAP for {asset}: {e}")
 
 
 def main():
