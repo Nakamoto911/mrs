@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import os
 import logging
 import sys
 import time
@@ -23,6 +24,8 @@ import pandas as pd
 import numpy as np
 import json
 import joblib
+import warnings
+from sklearn.exceptions import ConvergenceWarning
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -56,6 +59,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress warnings from libraries
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=ConvergenceWarning, module='sklearn')
+
+# Suppress verbose logs from external libraries
+logging.getLogger('shap').setLevel(logging.WARNING)
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
+
 
 class ModelTournament:
     """
@@ -72,6 +83,7 @@ class ModelTournament:
         'xgboost': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
         'lightgbm': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
         'mlp': {'type': 'neural', 'params': {'hidden_layers': [64, 32], 'epochs': 50}},
+        'lstm': {'type': 'neural', 'params': {'sequence_length': 24, 'hidden_size': 64, 'n_layers': 2, 'epochs': 50}},
     }
     
     def __init__(self, config_path: str = 'configs/experiment_config.yaml'):
@@ -409,10 +421,12 @@ class ModelTournament:
                     # Save model (save the full pipeline)
                     # We must fit the pipeline on the full dataset before saving
                     logger.info(f"    Refitting {model_name} on full history for persistence...")
-                    pipeline.fit(X, y)
-                    
-                    model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
-                    joblib.dump(pipeline, model_path)
+                    try:
+                        pipeline.fit(X, y)
+                        model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
+                        joblib.dump(pipeline, model_path)
+                    except Exception as e:
+                        logger.error(f"    Failed to save model {model_name}: {e}")
                     
                     # Store results ONLY after successful save if we want to be strict,
                     # but here we want the IC even if save fails, so we just wrap the dump.
@@ -555,9 +569,16 @@ class ModelTournament:
             asset = row['asset']
             model_name = row['model']
             
-            model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
-            if model_path.exists():
+            try:
+                model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
+                
+                # Use a defensive check for existence and readability
                 try:
+                    can_access = model_path.exists() and os.access(model_path, os.R_OK)
+                except PermissionError:
+                    can_access = False
+                    
+                if can_access:
                     model = joblib.load(model_path)
                     
                     # Get data (need to prepare it if not available)
@@ -570,7 +591,13 @@ class ModelTournament:
                             
                             # Compute SHAP
                             analyzer = SHAPAnalyzer(n_top_features=10)
-                            model_type = 'tree' if any(t in model_name for t in ['forest', 'boost', 'gbm']) else 'linear'
+                            if any(t in model_name for t in ['forest', 'boost', 'gbm']):
+                                model_type = 'tree'
+                            elif any(t in model_name for t in ['mlp', 'lstm']):
+                                model_type = 'neural'
+                            else:
+                                model_type = 'linear'
+                                
                             analyzer.compute_shap_values(model, X, model_type=model_type)
                             
                             # Save SHAP
@@ -580,8 +607,10 @@ class ModelTournament:
                             monitoring_sheet = analyzer.generate_monitoring_sheet(X)
                             monitoring_sheet.to_csv(self.experiments_dir / 'reports' / f'{asset}_monitoring.csv', index=False)
                             logger.info(f"Generated monitoring for {asset}")
-                except Exception as e:
-                    logger.error(f"Error generating SHAP for {asset}: {e}")
+                else:
+                    logger.warning(f"Skipping SHAP for {asset}: Model file {model_path} not found or not readable")
+            except Exception as e:
+                logger.error(f"Error generating SHAP for {asset}: {e}")
 
 
 def main():

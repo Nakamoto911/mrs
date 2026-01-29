@@ -106,30 +106,55 @@ class SHAPAnalyzer:
                 self.explainer = shap.TreeExplainer(underlying)
                 self.shap_values = self.explainer.shap_values(X_clean)
             
-            elif model_type == 'linear':
-                # Linear models
-                if hasattr(model, 'model'):
-                    underlying = model.model
-                else:
-                    underlying = model
-                
-                # Scale features if scaler available
-                if hasattr(model, 'scaler') and model.scaler is not None:
-                    X_scaled = model.scaler.transform(X_clean)
-                else:
-                    X_scaled = X_clean.values
-                
-                self.explainer = shap.LinearExplainer(underlying, X_scaled)
-                self.shap_values = self.explainer.shap_values(X_scaled)
-            
-            else:
-                # Kernel SHAP (slowest but works for any model)
+            elif model_type == 'neural':
+                # Neural networks (MLP, LSTM)
+                # For PyTorch wrappers, we use KernelExplainer for robustness
                 def predict_fn(x):
+                    # Ensure input is DataFrame with correct feature names
+                    df = pd.DataFrame(x, columns=self.feature_names)
                     if hasattr(model, 'predict'):
-                        return model.predict(pd.DataFrame(x, columns=self.feature_names))
-                    return model(x)
+                        preds = model.predict(df)
+                        # Ensure output is 1D numpy array
+                        if isinstance(preds, pd.Series):
+                            return preds.values
+                        return preds
+                    return model(torch.FloatTensor(x)).detach().numpy()
                 
                 # Use smaller background dataset for speed
+                # 50 samples is a standard balance for performance
+                background = shap.kmeans(X_clean, 50)
+                self.explainer = shap.KernelExplainer(predict_fn, background)
+                
+                # Performance Optimization for Neural Models:
+                # 1. Subsample foreground to the most recent 100 samples if needed
+                # 2. Limit the number of permutations for Kernel SHAP
+                if len(X_clean) > 100:
+                    logger.info(f"Subsampling foreground data from {len(X_clean)} to last 100 samples for neural SHAP speed...")
+                    X_foreground = X_clean.iloc[-100:]
+                else:
+                    X_foreground = X_clean
+                
+                self.shap_values = self.explainer.shap_values(X_foreground, nsamples=100)
+                
+                # Performance Optimization: Pad results to maintain index alignment
+                if len(X_clean) > 100:
+                    logger.info("Padding SHAP values with zeros for older samples to maintain alignment...")
+                    padded_shap = np.zeros((len(X_clean), X_clean.shape[1]))
+                    padded_shap[-100:] = self.shap_values
+                    self.shap_values = padded_shap
+                
+                return self.shap_values
+            
+            else:
+                # Kernel SHAP (fallback for any other model)
+                def predict_fn(x):
+                    if hasattr(model, 'predict'):
+                        preds = model.predict(pd.DataFrame(x, columns=self.feature_names))
+                        if isinstance(preds, pd.Series):
+                            return preds.values
+                        return preds
+                    return model(x)
+                
                 background = shap.kmeans(X_clean, 50)
                 self.explainer = shap.KernelExplainer(predict_fn, background)
                 self.shap_values = self.explainer.shap_values(X_clean)
