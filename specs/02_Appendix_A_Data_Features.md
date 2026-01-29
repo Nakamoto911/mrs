@@ -7,6 +7,9 @@
 ## Contents
 
 1. [Data Sources & Acquisition](#data-sources--acquisition)
+   - 1.1 [FRED-MD Database](#11-fred-md-database)
+   - 1.2 [Asset Return Data — Historical Proxy Strategy](#12-asset-return-data--historical-proxy-strategy)
+   - 1.3 [FRED Historical Vintage Reconstruction](#13-fred-historical-vintage-reconstruction-alfred)
 2. [Two-Phase Data Strategy](#two-phase-data-strategy)
 3. [Seven-Step Feature Engineering Pipeline](#seven-step-feature-engineering-pipeline)
 4. [Step 7 Deep Dive: Hierarchical Clustering](#step-7-hierarchical-clustering)
@@ -32,13 +35,35 @@
 - **2025-01 to Present:** Individual monthly CSVs (e.g., `2025-01.csv`, `current.csv`)
 - **Source:** [St. Louis Fed Research / McCracken Databases](https://www.stlouisfed.org/research/economists/mccracken/fred-databases)
 
-### 1.2 Asset Return Data — Historical Extension
+### 1.2 Asset Return Data — Historical Proxy Strategy
 
 | Asset | Modern Data | Historical Proxy | Method |
 |---|---|---|---|
 | S&P 500 | SPY (1993+) | FRED-MD `S&P 500` | Spliced at overlap |
 | 10Y Bond | IEF (2002+) | FRED-MD `GS10` (Synthetic Return) | Yield-to-Return conversion |
 | Gold | GLD (2004+) | FRED-MD `PPICMM` (PPI Metals) | Proxy Splicing |
+
+### 1.3 FRED Historical Vintage Reconstruction (ALFRED)
+
+To prevent look-ahead bias during validation, the system reconstructs a **Point-In-Time (PIT)** dataset using historical vintages. This ensures models are tested ONLY on data that was available at the time of prediction.
+
+#### 1.3.1 Acquisition & Storage
+- **Bulk Archives:** ZIP files containing monthly CSVs from 1999 to 2024 are downloaded and extracted to `data/raw/vintages/`.
+- **Recent Vintages:** Individual monthly CSVs (2025+) are scraped directly from the St. Louis Fed research page.
+- **Naming Convention:** Files are stored as `YYYY-MM.csv`, representing the vintage released in that month.
+
+#### 1.3.2 Point-In-Time Alignment
+For any target validation date $t$, the system identifies the "Relevant Vintage":
+1. Finds the closest available vintage file $V$ where $V_{date} \le t$.
+2. Example: For a validation date of `2015-06-30`, the loader selects `2015-06.csv`.
+3. **Publication Lag:** Since FRED-MD vintages are published monthly, the `2015-06.csv` file typically contains data ending in `2015-05` (May). This naturally enforces a 1-month publication lag for macroeconomic data.
+
+#### 1.3.3 Feature Reconstruction Methodology
+A single PIT observation for date $t$ is NOT simply a row from a table; it is the result of a full reconstruction:
+1. **Load Raw Vintage:** The entire history of raw data present in `V.csv` is loaded.
+2. **Apply Pipeline:** The full Seven-Step Feature Engineering Pipeline (Transformations, Ratios, Quintiles, Cointegration, Momentum) is executed on the *entire historical series* within that vintage.
+3. **Terminal Selection:** The last row of this fully processed dataset is extracted as the feature vector $X_t$.
+4. **Alias Resolution:** The system handles variable name changes (e.g., mapping `VXOCLSx` to the modern `VIXCLSx`) to ensure consistency across 25 years of vintage history.
 
 ---
 
@@ -223,30 +248,7 @@ GDP Growth, IP Growth, Income Growth all measure "economic activity" with correl
 | SHAP Stability | Low — rankings change across runs | High — stable dominant drivers |
 | Interpretability | Top 10 = 3 forces × 3 variants | Top 10 = 10 distinct forces |
 
----
 
-## Execution Timing & Requirements
-
-| Pipeline Step | Time (16-core CPU) | Notes |
-|---|---|---|
-| Step 0: Data Download | 5–10 min | Network dependent |
-| Step 0: Historical Extension | 10–15 min | One-time, cacheable |
-| Step 1: Stationarity Tests | 15–20 min | ADF + KPSS on 128 series |
-| Step 2: FRED-MD Transforms | 2–3 min | Fast vectorized ops |
-| Step 3: Macro Ratios | 5–10 min | Generate & test ~100 ratios |
-| Step 3.5: Quintiles | 5 min | Historical percentile calc |
-| Step 4: Cointegration | 30–45 min | Most intensive — Johansen tests |
-| Step 5: Momentum | 5–10 min | Rolling windows |
-| Step 6: Cross-Asset | 3–5 min | Correlations across 3 assets |
-| Step 7: Hierarchical Clustering | 20–25 min | Correlation + clustering + selection |
-| Step 7: Final Cleaning | 5–10 min | Missing values, standardization |
-| **TOTAL FIRST RUN** | **80–130 min** | **1.5–2 hours** |
-
-**Monthly Updates (Production):** 15–20 minutes
-
-- Download new month FRED-MD: 2 min
-- Download ETF prices: 1 min
-- Re-run transformations: 5–10 min
 - Update rolling features: 5 min
 
 ---
