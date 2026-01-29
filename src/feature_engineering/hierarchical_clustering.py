@@ -12,15 +12,16 @@ This ensures dominant drivers represent distinct economic forces, not statistica
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 import logging
+from sklearn.base import BaseEstimator, TransformerMixin
 
 logger = logging.getLogger(__name__)
 
 
-class HierarchicalClusterSelector:
+class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
     """
     Performs hierarchical clustering on features and selects representatives.
     
@@ -55,6 +56,8 @@ class HierarchicalClusterSelector:
         self.cluster_labels: Optional[Dict[str, int]] = None
         self.clusters: Optional[Dict[int, List[str]]] = None
         self.representatives: Optional[Dict[int, str]] = None
+        self.selected_features_: List[str] = []
+        self.fitted_ = False
     
     def compute_correlation_matrix(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -66,7 +69,7 @@ class HierarchicalClusterSelector:
         Returns:
             Correlation matrix
         """
-        logger.info(f"Computing correlation matrix for {len(df.columns)} features...")
+        logger.debug(f"Computing correlation matrix for {len(df.columns)} features...")
         
         # Use Spearman (rank correlation) for robustness
         corr = df.corr(method='spearman')
@@ -123,7 +126,7 @@ class HierarchicalClusterSelector:
         std = df.std()
         constant_cols = std[std == 0].index.tolist()
         if constant_cols:
-            logger.info(f"Removing {len(constant_cols)} constant features before clustering")
+            logger.debug(f"Removing {len(constant_cols)} constant features before clustering")
             df = df.drop(columns=constant_cols)
             
         if len(df.columns) == 0:
@@ -137,7 +140,7 @@ class HierarchicalClusterSelector:
         distance_condensed = self.compute_distance_matrix(corr)
         
         # Perform hierarchical clustering
-        logger.info(f"Performing hierarchical clustering with {self.linkage_method} linkage...")
+        logger.debug(f"Performing hierarchical clustering with {self.linkage_method} linkage...")
         
         try:
             self.linkage_matrix = linkage(distance_condensed, method=self.linkage_method)
@@ -163,11 +166,11 @@ class HierarchicalClusterSelector:
                 self.clusters[label] = []
             self.clusters[label].append(feature)
         
-        logger.info(f"Created {len(self.clusters)} clusters from {len(df.columns)} features")
+        logger.debug(f"Created {len(self.clusters)} clusters from {len(df.columns)} features")
         
         # Log cluster size distribution
         sizes = [len(features) for features in self.clusters.values()]
-        logger.info(f"Cluster sizes: min={min(sizes)}, max={max(sizes)}, median={np.median(sizes):.0f}")
+        logger.debug(f"Cluster sizes: min={min(sizes)}, max={max(sizes)}, median={np.median(sizes):.0f}")
         
         return self.clusters
     
@@ -271,7 +274,7 @@ class HierarchicalClusterSelector:
             self.representatives[cluster_id] = rep
         
         rep_list = list(self.representatives.values())
-        logger.info(f"Selected {len(rep_list)} representative features")
+        logger.debug(f"Selected {len(rep_list)} representative features")
         
         return rep_list
     
@@ -311,6 +314,49 @@ class HierarchicalClusterSelector:
             })
         
         return pd.DataFrame(rows).sort_values('Size', ascending=False)
+
+    def fit(self, X: pd.DataFrame, y: Any = None):
+        """
+        Scikit-learn fit method.
+        
+        Args:
+            X: Feature DataFrame
+            y: Optional target for IC-based selection
+            
+        Returns:
+            self
+        """
+        # If y is provided and selection_method is 'univariate_ic' or 'auto',
+        # we can use it for representative selection.
+        self.selected_features_ = self.select_all_representatives(X, target=y)
+        self.fitted_ = True
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Scikit-learn transform method.
+        Subsets DataFrame to only include selected features.
+        
+        Args:
+            X: Full feature DataFrame
+            
+        Returns:
+            Reduced DataFrame
+        """
+        if not self.fitted_:
+            raise ValueError("Transformer must be fitted before calling transform.")
+            
+        # Ensure we only try to select columns that exist
+        available_features = [f for f in self.selected_features_ if f in X.columns]
+        
+        if len(available_features) < len(self.selected_features_):
+            missing = set(self.selected_features_) - set(available_features)
+            logger.warning(f"Missing {len(missing)} selected features in transform step: {list(missing)[:5]}...")
+            
+        return X[available_features]
+
+# Alias forbrevity as requested in specs
+HierarchicalSelector = HierarchicalClusterSelector
 
 
 def reduce_features_by_clustering(df: pd.DataFrame,

@@ -16,11 +16,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
+from sklearn.base import BaseEstimator
 
 logger = logging.getLogger(__name__)
 
 
-class MLPWrapper:
+class MLPWrapper(BaseEstimator):
     """Multi-Layer Perceptron wrapper."""
     
     def __init__(self, 
@@ -55,9 +56,12 @@ class MLPWrapper:
         
         self.model = None
         self.scaler = StandardScaler()
-        self.fill_values = None
         self.feature_names = None
         self.input_dim = None
+        self.fitted_ = False
+        
+    def __sklearn_tags__(self):
+        return super().__sklearn_tags__()
         
         # Training params
     
@@ -144,6 +148,7 @@ class MLPWrapper:
             # PyTorch training would go here
             pass
         
+        self.fitted_ = True
         return self
     
     def predict(self, X: pd.DataFrame) -> pd.Series:
@@ -173,7 +178,7 @@ class MLPWrapper:
         return pd.Series(predictions.flatten(), index=X.index)
 
 
-class LSTMWrapper:
+class LSTMWrapper(BaseEstimator):
     """LSTM wrapper for sequence modeling."""
     
     def __init__(self,
@@ -207,6 +212,10 @@ class LSTMWrapper:
         self.model = None
         self.scaler = None
         self.feature_names = None
+        self.fitted_ = False
+        
+    def __sklearn_tags__(self):
+        return super().__sklearn_tags__()
     
     def _create_sequences(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Create sequences for LSTM."""
@@ -253,23 +262,13 @@ class LSTMWrapper:
         )
         self.model.fit(X_flat, y_seq)
         
+        self.fitted_ = True
         return self
     
     def predict(self, X: pd.DataFrame) -> pd.Series:
         """Generate predictions."""
         if self.model is None:
             raise ValueError("Model not fitted")
-        
-        # Impute and Scale
-        X_imputed_arr = self.imputer.transform(X[self.feature_names].fillna(0)) # LSTM uses naive fill for now? No, stick to robust.
-        # Actually LSTM predict didn't have robust pipeline applied in previous edits, let's just fix the immediate warning
-        # But wait, looking at my previous view of neural_nets.py, LSTMWrapper.predict was:
-        # X_scaled = self.scaler.transform(X.fillna(0))
-        # This implies it wasn't using the imputer at all in predict? 
-        # Let's align it with robust pipeline if possible, or just fix the warning.
-        # The fit method used:
-        # X_clean = X.loc[mask] ... scaler.fit_transform(X_clean)
-        # So it expects dataframe.
         
         # Simplest fix for LSTM predict (which is legacy/experimental):
         X_filled = X.fillna(0)

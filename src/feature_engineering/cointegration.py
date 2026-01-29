@@ -13,10 +13,12 @@ Cointegration captures long-run equilibrium relationships:
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
 from dataclasses import dataclass
 import logging
 import warnings
+
+from sklearn.base import BaseEstimator, TransformerMixin
 
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from statsmodels.tsa.stattools import coint
@@ -40,9 +42,10 @@ class CointegrationResult:
     max_eig_critical_values: np.ndarray
 
 
-class CointegrationAnalyzer:
+class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
     """
     Performs Johansen cointegration tests and generates ECT features.
+    Can be used as a scikit-learn transformer.
     """
     
     # Theory-driven pairs for cointegration testing
@@ -82,6 +85,10 @@ class CointegrationAnalyzer:
         # Store results
         self.results: Dict[str, CointegrationResult] = {}
         self.ect_features: Dict[str, pd.Series] = {}
+        
+        # Scikit-learn parameters
+        self.vectors_: Dict[str, np.ndarray] = {}
+        self.fitted_ = False
     
     def _get_critical_value_index(self) -> int:
         """Get index for critical values based on significance level."""
@@ -281,9 +288,82 @@ class CointegrationAnalyzer:
         
         # Summary
         n_coint = sum(1 for r in self.results.values() if r.is_cointegrated)
-        logger.info(f"Found {n_coint}/{len(self.results)} cointegrated pairs")
+        logger.debug(f"Found {n_coint}/{len(self.results)} cointegrated pairs")
         
         return self.results
+
+    def fit(self, X: pd.DataFrame, y: Any = None):
+        """
+        Scikit-learn fit method.
+        
+        Args:
+            X: DataFrame with level data
+            y: Ignored
+            
+        Returns:
+            self
+        """
+        self.analyze_pairs(X)
+        
+        # Store vectors for transform
+        self.vectors_ = {}
+        for name, res in self.results.items():
+            if res.is_cointegrated and res.cointegrating_vector is not None:
+                self.vectors_[name] = res.cointegrating_vector
+        
+        self.fitted_ = True
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Scikit-learn transform method.
+        Computes ECT features using stored vectors.
+        
+        Args:
+            X: DataFrame with level data
+            
+        Returns:
+            DataFrame with original features PLUS ECT features
+        """
+        if not self.fitted_:
+            raise ValueError("Transformer must be fitted before calling transform.")
+            
+        features = X.copy()
+        
+        for pair_name, coint_vector in self.vectors_.items():
+            # Find the series names from results (matched by pair_name)
+            if pair_name not in self.results:
+                continue
+                
+            res = self.results[pair_name]
+            series1_name = res.series1
+            series2_name = res.series2
+            
+            if series1_name not in X.columns or series2_name not in X.columns:
+                continue
+            
+            # Compute ECT
+            ect = self.compute_ect(X[series1_name], X[series2_name], coint_vector, pair_name)
+            
+            # Level ECT
+            features[f"ECT_{pair_name}"] = ect
+            
+            # Z-score of ECT (Expanding or fixed?)
+            # User spec: "Computes Z-scores using expanding window statistics (to remain safe) or fixed mean/std from train set."
+            # Expanding is safer for look-ahead.
+            ect_zscore = (ect - ect.expanding().mean()) / ect.expanding().std()
+            features[f"ECT_{pair_name}_zscore"] = ect_zscore
+            
+            # Add changes
+            for window in [1, 3, 6]:
+                features[f"ECT_{pair_name}_chg_{window}M"] = ect.diff(window)
+        
+        # Drop raw level columns to ensure downstream models only see stationary data
+        cols_to_drop = [c for c in features.columns if c.endswith('_level')]
+        if cols_to_drop:
+            features = features.drop(columns=cols_to_drop)
+            
+        return features
     
     def generate_ect_features(self, df: pd.DataFrame,
                              include_changes: bool = True,

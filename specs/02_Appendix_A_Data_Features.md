@@ -11,8 +11,10 @@
    - 1.2 [Asset Return Data — Historical Proxy Strategy](#12-asset-return-data--historical-proxy-strategy)
    - 1.3 [FRED Historical Vintage Reconstruction](#13-fred-historical-vintage-reconstruction-alfred)
 2. [Two-Phase Data Strategy](#two-phase-data-strategy)
-3. [Seven-Step Feature Engineering Pipeline](#seven-step-feature-engineering-pipeline)
-4. [Step 7 Deep Dive: Hierarchical Clustering](#step-7-hierarchical-clustering)
+3. [Six-Step Feature Engineering Pipeline (Stateless)](#six-step-feature-engineering-pipeline-stateless)
+4. [Step 7: State-Dependent Features (PIT Pipeline)](#step-7-state-dependent-features-pit-pipeline)
+   - 4.1 [Cointegration & Error Correction Terms](#41-cointegration--error-correction-terms)
+   - 4.2 [Hierarchical Clustering & Feature Selection](#42-hierarchical-clustering--feature-selection)
 5. [Execution Timing & Requirements](#execution-timing--requirements)
 
 ---
@@ -106,9 +108,9 @@ A single PIT observation for date $t$ is NOT simply a row from a table; it is th
 
 ---
 
-## Seven-Step Feature Engineering Pipeline
+## Six-Step Feature Engineering Pipeline (Stateless)
 
-Automated pipeline: ~600 raw features → ~250–300 cluster representatives
+Automated pipeline: ~600 raw features generated pointwise or using strictly expanding windows. This base feature set is pre-computed before the CV loop.
 
 ### Step 0: Data Acquisition
 
@@ -175,18 +177,8 @@ Automated pipeline: ~600 raw features → ~250–300 cluster representatives
 - **Example**: If GS10=3.5% and this is in the 85th percentile of yields seen *so far*, then GS10_Q5=1.
 - **Result**: ~40–60 quintile features with high integrity (no look-ahead bias)
 
-### Step 4: Cointegration Analysis & Error Correction Terms
-
-- **Theoretically motivated pairs:**
-  - Nominal GDP vs. M2 (quantity theory of money)
-  - 10Y Yield vs. CPI (Fisher hypothesis)
-  - Industrial Production vs. Employment
-  - Housing Starts vs. Mortgage Rates
-  - Stock Prices vs. Dividends
-- Johansen test with restricted constant specification
-- If rank > 0 at 5% significance: Extract cointegrating vector β
-- Create Error Correction Term: ECT = X₁ − β·X₂
-- **Result:** ~10–20 cointegration spread features
+### Step 4: Cointegration Analysis & Error Correction Terms (MOVED)
+*This step is now part of the **State-Dependent Features (PIT Pipeline)**. See Section 4.*
 
 ### Step 5: Momentum Features
 
@@ -203,7 +195,25 @@ For all stationary series: Compute 3M, 6M, 12M changes
 
 ---
 
-## Step 7: Hierarchical Clustering
+## Step 7: State-Dependent Features (PIT Pipeline)
+
+To eliminate look-ahead bias, features whose calculation depends on the global dataset (Stateful Features) are wrapped in `scikit-learn` transformers and fitted ONLY on the training fold within the cross-validation loop.
+
+### 4.1 Cointegration & Error Correction Terms
+
+Cointegration captures long-run equilibrium relationships. In the PIT pipeline:
+1. **Fit**: The Johansen test is run on the training data to calculate equilibrium vectors ($\beta$).
+2. **Transform**: These $\beta$ vectors are applied to both training and validation data to compute Error Correction Terms (ECT).
+3. **Z-Scores**: ECT Z-scores are computed using **expanding windows** from the start of the series to ensure no future information is used.
+
+**Theoretically motivated pairs:**
+- Nominal GDP vs. M2 (quantity theory of money)
+- 10Y Yield vs. CPI (Fisher hypothesis)
+- Industrial Production vs. Employment
+- Housing Starts vs. Mortgage Rates
+- SP500 vs. GDP
+
+### 4.2 Hierarchical Clustering & Feature Selection
 
 ### 4.1 The Substitution Instability Problem
 
@@ -228,7 +238,7 @@ GDP Growth, IP Growth, Income Growth all measure "economic activity" with correl
    - **Large clusters (10+):** Highest correlation to cluster centroid
    - **Medium (4–9):** Centroid method, validate with IC
 
-**Result:** ~250–300 features, each representing DISTINCT economic force
+**Result:** ~250–300 features, each representing DISTINCT economic force. By fitting the clusterer on each training fold, we ensure that feature selection is based solely on correlations available at that specific point in time.
 
 ### 4.3 Expected Cluster Structure
 

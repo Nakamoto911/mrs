@@ -39,6 +39,9 @@ from feature_engineering import (
 from models import create_linear_model, create_tree_model, create_neural_model
 from evaluation import TimeSeriesCV, CrossValidator, compute_all_metrics, SHAPAnalyzer
 from evaluation.ensemble import EnsembleEvaluator
+from sklearn.pipeline import Pipeline
+from feature_engineering.cointegration import CointegrationAnalyzer
+from feature_engineering.hierarchical_clustering import HierarchicalSelector
 
 
 # Configure logging
@@ -65,7 +68,7 @@ class ModelTournament:
         'ridge': {'type': 'linear', 'params': {'alpha': 1.0}},
         'lasso': {'type': 'linear', 'params': {'alpha': 0.0001, 'max_iter': 100000}},
         'elastic_net': {'type': 'linear', 'params': {'alpha': 0.0001, 'l1_ratio': 0.5, 'max_iter': 100000}},
-        'random_forest': {'type': 'tree', 'params': {'n_estimators': 20, 'max_depth': 4, 'n_jobs': 1}},
+        'random_forest': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'n_jobs': 1}},
         'xgboost': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
         'lightgbm': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
         'mlp': {'type': 'neural', 'params': {'hidden_layers': [64, 32], 'epochs': 50}},
@@ -155,22 +158,28 @@ class ModelTournament:
         quintile_data = quintile_data.loc[:, ~quintile_data.columns.duplicated()]
         quintiles = generate_all_quintile_features(quintile_data)
         
-        # Step 4: Cointegration analysis
-        logger.info("Step 4: Running cointegration analysis...")
-        ect_features, coint_summary = generate_cointegration_features(raw_data)
+        # Step 4: Cointegration analysis (DEPRECATED: Moved to PIT pipeline)
+        # logger.info("Step 4: Running cointegration analysis...")
+        # ect_features, coint_summary = generate_cointegration_features(raw_data)
         
         # Step 5: Momentum features
         logger.info("Step 5: Generating momentum features...")
         momentum = generate_all_momentum_features(transformed)
         
+        # Prepare raw levels for PIT cointegration (rename to avoid collision)
+        coint_vars = list(set([p[0] for p in CointegrationAnalyzer.DEFAULT_PAIRS] + [p[1] for p in CointegrationAnalyzer.DEFAULT_PAIRS]))
+        raw_levels = raw_data[coint_vars].copy()
+        raw_levels.columns = [f"{c}_level" for c in raw_levels.columns]
+
         # Combine all features
         logger.info("Step 6: Combining features...")
         all_features = pd.concat([
             transformed,
             ratios,
             quintiles,
-            ect_features,
-            momentum
+            # ect_features,
+            momentum,
+            raw_levels
         ], axis=1)
         
         # Remove duplicates and clean
@@ -178,19 +187,20 @@ class ModelTournament:
         
         logger.info(f"Total features before clustering: {len(all_features.columns)}")
         
-        # Step 7: Hierarchical clustering
-        logger.info("Step 7: Applying hierarchical clustering...")
-        reduced_features, cluster_info = reduce_features_by_clustering(
-            all_features,
-            similarity_threshold=0.80
-        )
+        # Step 7: Hierarchical clustering (DEPRECATED: Moved to PIT pipeline)
+        # logger.info("Step 7: Applying hierarchical clustering...")
+        # reduced_features, cluster_info = reduce_features_by_clustering(
+        #     all_features,
+        #     similarity_threshold=0.80
+        # )
         
-        logger.info(f"Features after clustering: {len(reduced_features.columns)}")
+        reduced_features = all_features
+        logger.info(f"Base features prepared for CV loop: {len(reduced_features.columns)}")
         
         # Save features
         timestamp = datetime.now().strftime('%Y%m%d')
-        reduced_features.to_parquet(self.experiments_dir / 'features' / f'features_{timestamp}.parquet')
-        cluster_info.to_csv(self.experiments_dir / 'features' / f'clusters_{timestamp}.csv')
+        reduced_features.to_parquet(self.experiments_dir / 'features' / f'base_features_{timestamp}.parquet')
+        # cluster_info.to_csv(self.experiments_dir / 'features' / f'clusters_{timestamp}.csv')
         
         elapsed = time.time() - start_time
         logger.info(f"Feature pipeline completed in {elapsed/60:.1f} minutes")
@@ -328,11 +338,36 @@ class ModelTournament:
                     start = time.time()
                     
                     # Train model
-                    model = self.train_model(model_name, X, y)
+                    # Define Point-in-Time Pipeline with an UNFITTED model instance
+                    # We obtain a fresh instance from the factory using same config
+                    model_config = self.MODEL_CONFIGS.get(model_name)
+                    model_type = model_config['type']
+                    params = model_config['params']
+                    
+                    if model_type == 'linear':
+                        model_instance = create_linear_model(model_name, **params)
+                    elif model_type == 'tree':
+                        model_instance = create_tree_model(model_name, **params)
+                    elif model_type == 'neural':
+                        model_instance = create_neural_model(model_name.replace('_', ''), **params)
+                    
+                    # Create pairs config with _level suffix to match the features we added
+                    coint_pairs = []
+                    for p in CointegrationAnalyzer.DEFAULT_PAIRS:
+                        if len(p) >= 3:
+                            # (series1, series2, name, theory)
+                             coint_pairs.append((f"{p[0]}_level", f"{p[1]}_level", p[2], p[3] if len(p) > 3 else ''))
+
+                    pipeline_steps = [
+                        ('cointegration', CointegrationAnalyzer(pairs=coint_pairs)),
+                        ('clustering', HierarchicalSelector(similarity_threshold=0.80)),
+                        ('model', model_instance)
+                    ]
+                    pipeline = Pipeline(pipeline_steps)
                     
                     # Cross-validation
                     result = validator.evaluate(
-                        model,
+                        pipeline,
                         X, y,
                         model_name=model_name,
                         asset=asset,
@@ -364,9 +399,9 @@ class ModelTournament:
                         preds_to_save.index.name = 'date'
                         preds_to_save.to_csv(pred_path)
                     
-                    # Save model
+                    # Save model (save the full pipeline)
                     model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
-                    joblib.dump(model, model_path)
+                    joblib.dump(pipeline, model_path)
                     
                     # Store results ONLY after successful save if we want to be strict,
                     # but here we want the IC even if save fails, so we just wrap the dump.

@@ -13,12 +13,13 @@ from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
+from sklearn.base import BaseEstimator
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class LinearModelWrapper:
+class LinearModelWrapper(BaseEstimator):
     """Wrapper for sklearn linear models with consistent interface."""
     
     MODELS = {
@@ -40,11 +41,12 @@ class LinearModelWrapper:
         
         self.model_type = model_type
         self.kwargs = kwargs
-        self.model = None
-        self.scaler = StandardScaler()
-        self.fill_values = None
-        self.feature_names = None
-        self.selected_features = None
+        self.model_ = None
+        self.scaler_ = StandardScaler()
+        self.fill_values_ = None
+        self.feature_names_ = None
+        self.selected_features_ = None
+        self.fitted_ = False
         
     def fit(self, X: pd.DataFrame, y: pd.Series) -> 'LinearModelWrapper':
         """
@@ -57,7 +59,7 @@ class LinearModelWrapper:
         Returns:
             self
         """
-        self.feature_names = X.columns.tolist()
+        self.feature_names_ = X.columns.tolist()
         
         # 1. Align features and target (remove NaNs from target first)
         y_clean = y.dropna()
@@ -80,6 +82,7 @@ class LinearModelWrapper:
             logger.debug(f"Removing {len(constant_features)} constant features")
             
         initial_selected = [c for c in X_sync.columns if c not in all_nan_features and c not in constant_features]
+        initial_selected = [c for c in X_sync.columns if c not in all_nan_features and c not in constant_features]
         X_filtered = X_sync[initial_selected]
         
         # 3. Degrees of Freedom Guard: N > K + 20
@@ -99,13 +102,13 @@ class LinearModelWrapper:
                 'variance': vars
             }).sort_values(['nan_count', 'variance'], ascending=[True, False])
             
-            self.selected_features = ranking.index[:max_k].tolist()
-            X_filtered = X_filtered[self.selected_features]
-            logger.debug(f"Successfully pruned to {len(self.selected_features)} features")
+            self.selected_features_ = ranking.index[:max_k].tolist()
+            X_filtered = X_filtered[self.selected_features_]
+            logger.debug(f"Successfully pruned to {len(self.selected_features_)} features")
         else:
-            self.selected_features = initial_selected
+            self.selected_features_ = initial_selected
             
-        if len(self.selected_features) == 0:
+        if len(self.selected_features_) == 0:
             raise ValueError(f"No valid features remaining after pruning (N={n_samples})")
 
         # 4. Strict Rolling Imputation (No Look-ahead)
@@ -116,15 +119,16 @@ class LinearModelWrapper:
         X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
         
         # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
-        self.fill_values = X_filtered.median().fillna(0.0)
+        self.fill_values_ = X_filtered.median().fillna(0.0)
         
         # 5. Scale features
-        X_scaled = self.scaler.fit_transform(X_imputed)
+        X_scaled = self.scaler_.fit_transform(X_imputed)
         
         # 6. Fit model
-        self.model = self.MODELS[self.model_type](**self.kwargs)
-        self.model.fit(X_scaled, y_sync)
+        self.model_ = self.MODELS[self.model_type](**self.kwargs)
+        self.model_.fit(X_scaled, y_sync)
         
+        self.fitted_ = True
         return self
     
     def predict(self, X: pd.DataFrame) -> pd.Series:
@@ -137,26 +141,26 @@ class LinearModelWrapper:
         Returns:
             Predictions as Series
         """
-        if self.model is None:
+        if not self.fitted_:
             raise ValueError("Model not fitted")
         
         # Filter to selected features
-        X_filtered = X[self.selected_features]
+        X_filtered = X[self.selected_features_]
         
         # Impute and Scale (handle potential new NaNs in predict data using frozen values)
-        X_imputed = X_filtered.fillna(self.fill_values)
-        X_scaled = self.scaler.transform(X_imputed)
+        X_imputed = X_filtered.fillna(self.fill_values_)
+        X_scaled = self.scaler_.transform(X_imputed)
         
-        predictions = self.model.predict(X_scaled)
+        predictions = self.model_.predict(X_scaled)
         
         return pd.Series(predictions, index=X.index)
     
     def get_coefficients(self) -> pd.Series:
         """Get model coefficients for selected features."""
-        if self.model is None:
+        if not self.fitted_:
             raise ValueError("Model not fitted")
         
-        return pd.Series(self.model.coef_, index=self.selected_features)
+        return pd.Series(self.model_.coef_, index=self.selected_features_)
     
     def get_feature_importance(self) -> pd.Series:
         """Get absolute coefficients as feature importance."""

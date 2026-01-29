@@ -11,11 +11,12 @@ import pandas as pd
 from typing import Dict, List, Optional, Any
 import logging
 from sklearn.impute import SimpleImputer
+from sklearn.base import BaseEstimator
 
 logger = logging.getLogger(__name__)
 
 
-class TreeModelWrapper:
+class TreeModelWrapper(BaseEstimator):
     """Wrapper for tree-based models with consistent interface."""
     
     def __init__(self, model_type: str = 'xgboost', **kwargs):
@@ -28,9 +29,10 @@ class TreeModelWrapper:
         """
         self.model_type = model_type
         self.kwargs = kwargs
-        self.model = None
-        self.feature_names = None
-        self.fill_values = None
+        self.model_ = None
+        self.feature_names_ = None
+        self.fill_values_ = None
+        self.fitted_ = False
         
     def _create_model(self):
         """Create the underlying model."""
@@ -108,7 +110,7 @@ class TreeModelWrapper:
         Returns:
             self
         """
-        self.feature_names = X.columns.tolist()
+        self.feature_names_ = X.columns.tolist()
         
         # 1. Align features and target
         y_clean = y.dropna()
@@ -118,14 +120,14 @@ class TreeModelWrapper:
         
         if len(y_sync) < 20:
              raise ValueError(f"Insufficient total samples ({len(y_sync)}) for alignment")
-
+ 
         # 2. Prune all-NaN features (critical for imputation)
         all_nan_features = X_sync.columns[X_sync.isna().all()].tolist()
         if all_nan_features:
             logger.debug(f"Removing {len(all_nan_features)} all-NaN features")
             
-        self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
-        X_filtered = X_sync[self.feature_names]
+        self.feature_names_ = [c for c in X_sync.columns if c not in all_nan_features]
+        X_filtered = X_sync[self.feature_names_]
         
         # 3. Strict Rolling Imputation (No Look-ahead)
         # 1. Compute rolling stats (shifted by 1)
@@ -135,15 +137,16 @@ class TreeModelWrapper:
         X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
         
         # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
-        self.fill_values = X_filtered.median().fillna(0.0)
+        self.fill_values_ = X_filtered.median().fillna(0.0)
         
         if len(X_imputed) < 20:
             raise ValueError(f"Insufficient data for fitting: {len(X_imputed)}")
         
         # Create and fit model
-        self.model = self._create_model()
-        self.model.fit(X_imputed, y_sync)
+        self.model_ = self._create_model()
+        self.model_.fit(X_imputed, y_sync)
         
+        self.fitted_ = True
         return self
     
     def predict(self, X: pd.DataFrame) -> pd.Series:
@@ -156,30 +159,30 @@ class TreeModelWrapper:
         Returns:
             Predictions as Series
         """
-        if self.model is None:
+        if not self.fitted_:
             raise ValueError("Model not fitted")
         
         # Filter features
-        X_filtered = X[self.feature_names]
+        X_filtered = X[self.feature_names_]
         
         # Impute
-        X_filled = X_filtered.fillna(self.fill_values)
+        X_filled = X_filtered.fillna(self.fill_values_)
         
-        predictions = self.model.predict(X_filled)
+        predictions = self.model_.predict(X_filled)
         
         return pd.Series(predictions, index=X.index)
     
     def get_feature_importance(self) -> pd.Series:
         """Get feature importance from model."""
-        if self.model is None:
+        if not self.fitted_:
             raise ValueError("Model not fitted")
         
-        if hasattr(self.model, 'feature_importances_'):
-            importance = self.model.feature_importances_
+        if hasattr(self.model_, 'feature_importances_'):
+            importance = self.model_.feature_importances_
         else:
-            importance = np.ones(len(self.feature_names)) / len(self.feature_names)
+            importance = np.ones(len(self.feature_names_)) / len(self.feature_names_)
         
-        return pd.Series(importance, index=self.feature_names).sort_values(ascending=False)
+        return pd.Series(importance, index=self.feature_names_).sort_values(ascending=False)
 
 
 class RegimeClassifier:
