@@ -161,15 +161,19 @@ Automated pipeline: ~600 raw features → ~250–300 cluster representatives
 **Problem:** GS10 declining from 5% (Quintile 5) has different implications than from 2% (Quintile 1). Standard change features cannot distinguish these regimes.
 
 - Select ~15–20 key stationary variables (GS10, Fed Funds, spreads, VIX, unemployment)
-- Compute historical quintiles using full sample (1959–present)
-  - **Q1:** 0–20th percentile (very low)
-  - **Q2:** 20–40th (low)
-  - **Q3:** 40–60th (neutral)
-  - **Q4:** 60–80th (high)
-  - **Q5:** 80–100th (very high)
+- Compute historical quintiles using a **Strict Expanding Window (Recursive)** methodology to eliminate look-ahead bias.
+  - **Algorithm**: For each date $t$, the quintile $Q_t$ is calculated using only data from $0$ to $t-1$.
+  - **Burn-In**: 60 Months (5 Years) minimum history required.
+  - **Handling Extremes**: New highs are automatically Q5, new lows are automatically Q1.
+  - **Quintiles**:
+    - **Q1**: 0–20th percentile (very low)
+    - **Q2**: 20–40th (low)
+    - **Q3**: 40–60th (neutral)
+    - **Q4**: 60–80th (high)
+    - **Q5**: 80–100th (very high)
 - Create features: One-hot encoding OR continuous z-score within regime
-- **Example:** If GS10=3.5% → Historical Q2 → GS10_Q2=1, others=0
-- **Result:** ~40–60 quintile features
+- **Example**: If GS10=3.5% and this is in the 85th percentile of yields seen *so far*, then GS10_Q5=1.
+- **Result**: ~40–60 quintile features with high integrity (no look-ahead bias)
 
 ### Step 4: Cointegration Analysis & Error Correction Terms
 

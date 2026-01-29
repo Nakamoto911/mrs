@@ -80,32 +80,22 @@ class QuintileFeatureGenerator:
             Series with quintile ranks (1 to n_quintiles)
         """
         if self.expanding_window:
-            # Use expanding window to avoid look-ahead bias
-            def expanding_quintile(x):
-                # x is a numpy array (raw=True)
-                if len(x) < self.min_observations:
-                    return np.nan
-                current = x[-1]
-                if np.isnan(current):
-                    return np.nan
-                # Mask nans in historical data
-                hist = x[:-1]
-                mask = ~np.isnan(hist)
-                valid_hist = hist[mask]
-                
-                if len(valid_hist) == 0:
-                    return np.nan
-                    
-                # Compute percentile rank: (current > historical).mean()
-                pct_rank = (valid_hist < current).sum() / len(valid_hist)
-                
-                # Convert to quintile (1 to n_quintiles)
-                quintile = int(np.floor(pct_rank * self.n_quintiles)) + 1
-                return min(quintile, self.n_quintiles)
+            # Use optimized expanding window to avoid look-ahead bias
+            # Formula: Percentile of Score (Strict) = (Count of history < current) / len(history)
+            # Using rank(method='min') gives 1 + count of elements strictly smaller.
+            # So count(history < current) = rank - 1.
+            # len(history) = total_count - 1.
             
-            return series.expanding(min_periods=self.min_observations).apply(
-                expanding_quintile, raw=True
-            )
+            expanding = series.expanding(min_periods=self.min_observations)
+            rank = expanding.rank(method='min')
+            count = expanding.count()
+            
+            # Avoid division by zero (though min_observations >= 60)
+            score = (rank - 1) / (count - 1).replace(0, np.nan)
+            
+            # Map to 1-5
+            quintile = (score * self.n_quintiles).apply(np.floor) + 1
+            return quintile.clip(upper=self.n_quintiles)
         else:
             # Use full sample (not recommended for production)
             quintiles = pd.qcut(
