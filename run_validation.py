@@ -40,11 +40,13 @@ def generate_validation_dates(start_year: int = 2000, end_year: int = 2024):
 def run_single_validation(asset, model_name, start_year, returns=None, tournament_results=None):
     """Execute validation for a single asset/model pair."""
     asset = asset.upper()
-    model_name = model_name.lower()
-    model_path = f"experiments/models/{asset}_{model_name}.pkl"
+    # Try .json first (Ensemble), then .pkl
+    model_path = Path(f"experiments/models/{asset}_{model_name}.json")
+    if not model_path.exists():
+        model_path = Path(f"experiments/models/{asset}_{model_name}.pkl")
     
-    if not Path(model_path).exists():
-        logger.error(f"Model file not found: {model_path}")
+    if not model_path.exists():
+        logger.error(f"Model file not found for {asset}_{model_name}")
         return None
 
     # Get Revised IC
@@ -118,19 +120,28 @@ def main():
     else:
         # Batch mode: scan directory
         model_dir = Path("experiments/models")
-        for pkl in model_dir.glob("*.pkl"):
-            # Expected name format: {ASSET}_{MODEL}.pkl
-            name = pkl.stem
-            if "_" in name:
-                parts = name.split("_")
-                asset = parts[0]
-                model = "_".join(parts[1:])
-                
-                # Filter if needed
-                if args.asset and asset.upper() != args.asset.upper(): continue
-                if args.model and model.lower() != args.model.lower(): continue
-                
-                models_to_run.append((asset, model))
+        # Find both .pkl and .json files
+        for ext in ["*.pkl", "*.json"]:
+            for model_file in model_dir.glob(ext):
+                # Expected name format: {ASSET}_{MODEL}.{ext}
+                name = model_file.stem
+                if "_" in name:
+                    parts = name.split("_")
+                    asset = parts[0]
+                    model = "_".join(parts[1:])
+                    
+                    # Filter if needed
+                    if args.asset and asset.upper() != args.asset.upper(): continue
+                    if args.model and model.lower() != args.model.lower(): continue
+                    
+                    # Deduplicate (prefer .json if both exist)
+                    existing = [m for m in models_to_run if m[0] == asset and m[1] == model]
+                    if not existing:
+                        models_to_run.append((asset, model))
+                    elif model_file.suffix == '.json':
+                        # Replace .pkl with .json if it was already added
+                        models_to_run = [m for m in models_to_run if not (m[0] == asset and m[1] == model)]
+                        models_to_run.append((asset, model))
     
     if not models_to_run:
         logger.error("No models found matching criteria.")

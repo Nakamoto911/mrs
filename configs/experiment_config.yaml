@@ -339,3 +339,11 @@ output:
     shap: "experiments/shap"
     regimes: "experiments/regimes"
     reports: "experiments/reports"
+    predictions: "experiments/predictions"
+
+# =============================================================================
+# Ensemble Strategy Configuration
+# =============================================================================
+ensemble:
+  enabled: true
+  size: 5

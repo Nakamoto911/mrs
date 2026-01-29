@@ -9,6 +9,8 @@ import numpy as np
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
+import json
+import yaml
 
 # Page configuration
 st.set_page_config(
@@ -65,6 +67,23 @@ def load_tournament_results():
         if 'RMSE_mean' in df.columns:
             df = df.rename(columns={'RMSE_mean': 'RMSE'})
         return df
+    return pd.DataFrame()
+
+
+def load_ensemble_manifest(asset_code):
+    """Load ensemble manifest for a specific asset."""
+    path = EXPERIMENTS_DIR / "models" / f"{asset_code}_Ensemble_Top5.json"
+    if path.exists():
+        with open(path, 'r') as f:
+            return json.load(f)
+    return None
+
+
+def load_prediction_data(asset_code, model_name):
+    """Load OOS predictions for a specific model."""
+    path = EXPERIMENTS_DIR / "predictions" / f"{asset_code}_{model_name}_preds.csv"
+    if path.exists():
+        return pd.read_csv(path)
     return pd.DataFrame()
 
 
@@ -151,8 +170,41 @@ def show_dominant_drivers():
     selected_asset_label = st.selectbox("Select Asset", list(asset_map.keys()))
     asset_code = asset_map[selected_asset_label]
     
+    
     monitoring_data = load_monitoring_data(asset_code)
     
+    # Ensemble check
+    model_results = load_tournament_results()
+    best_model_name = ""
+    if not model_results.empty:
+        asset_best = model_results[model_results['Asset'] == asset_code]
+        if not asset_best.empty:
+            best_model_name = asset_best.loc[asset_best['IC_mean'].idxmax(), 'Model']
+
+    if "Ensemble" in best_model_name:
+        st.info(f"ℹ️ **Ensemble View:** Feature importance represents the average SHAP value across the Top models. Signals indicate the consensus direction.")
+        
+        # Vote Split Logic
+        manifest = load_ensemble_manifest(asset_code)
+        if manifest:
+            constituent_models = manifest.get('models', [])
+            bull_votes = 0
+            total_votes = len(constituent_models)
+            
+            # Use most recent predictions for consensus
+            for m in constituent_models:
+                preds = load_prediction_data(asset_code, m)
+                if not preds.empty:
+                    last_pred = preds.iloc[-1]['predicted']
+                    if last_pred > 0:
+                        bull_votes += 1
+            
+            consensus_pct = (bull_votes / total_votes) if total_votes > 0 else 0.5
+            consensus_label = "Bullish" if consensus_pct > 0.6 else ("Bearish" if consensus_pct < 0.4 else "Neutral")
+            
+            st.write(f"**Signal Consensus:** {consensus_label} ({bull_votes}/{total_votes} Models)")
+            st.progress(consensus_pct, text=f"{consensus_pct:.0%} Bullish Consensus")
+
     if monitoring_data.empty:
         st.warning(f"No monitoring data found for {asset_code}. Run the tournament first.")
         return
@@ -243,13 +295,18 @@ def show_model_comparison(model_results):
     # Performance table
     st.subheader("Performance Metrics")
     
+    def highlight_ensemble(row):
+        if "Ensemble" in str(row.Model):
+            return ['background-color: #E6F3FF'] * len(row)
+        return [''] * len(row)
+
     st.dataframe(
         filtered.style.format({
             'IC_mean': '{:.3f}',
             'IC_std': '{:.3f}',
             'RMSE': '{:.3f}',
             'Hit_Rate': '{:.1%}'
-        }).background_gradient(subset=['IC_mean'], cmap='Greens'),
+        }).background_gradient(subset=['IC_mean'], cmap='Greens').apply(highlight_ensemble, axis=1),
         width='stretch',
         hide_index=True
     )
@@ -280,6 +337,13 @@ def show_model_comparison(model_results):
                 row['Model'],
                 f"IC: {row['IC_mean']:.3f}"
             )
+            # Show composition if ensemble
+            if "Ensemble" in row['Model']:
+                manifest = load_ensemble_manifest(row['Asset'])
+                if manifest:
+                    with st.expander("🧩 Ensemble Composition"):
+                        for m in manifest.get('models', []):
+                            st.write(f"- {m}")
 
 
 def show_feature_explorer():
@@ -373,6 +437,14 @@ def show_experiment_config():
         lgb = st.checkbox("LightGBM", value=True)
         mlp = st.checkbox("MLP Neural Net", value=False)
         lstm = st.checkbox("LSTM", value=False)
+    
+    st.markdown("---")
+    
+    col3, col4 = st.columns(2)
+    with col3:
+        st.subheader("Ensemble Strategy")
+        enable_ensemble = st.checkbox("Enable Ensemble (Top N Average)", value=True)
+        ensemble_size = st.slider("Ensemble Size (Top N)", 2, 10, 5)
     
     st.markdown("---")
     

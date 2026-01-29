@@ -69,6 +69,19 @@ Optuna Bayesian optimization: 100 trials per model, 5-fold time-series CV
 - **Tree-based:** Learning rate, max depth, min samples/leaf, n_estimators
 - **Neural Nets:** Layer sizes, dropout rate, learning rate, batch size
 
+### 2.4 Ensemble Strategy: Average Top 5
+
+To reduce model-specific variance and improve out-of-sample stability, the system implements a post-hoc **Variance Reduction** strategy:
+
+1. **Prediction Persistence:** Every model in the tournament persists its Out-of-Sample (OOS) predictions to `experiments/predictions/`.
+2. **IC Ranking:** For each asset, all models are ranked by their mean Information Coefficient (IC).
+3. **Top 5 Selection:** The top $N$ models (default: 5) are selected.
+4. **Signal Averaging:** An "Ensemble" model is created by computing the row-wise mean of the signals from the selected models.
+5. **Averaging Logic:**
+   - **Alignment:** Perform an Inner Join on the Date index to ensure only overlapping valid periods are included.
+   - **Weighting:** Equal weighting is applied to all selected models.
+6. **Ensemble Metrics:** The averaged signal is evaluated as a distinct model and added to the leaderboard as `Ensemble_Top5`.
+
 ### 2.3 Robust Training Layer
 
 To maintain estimation integrity across the high-dimensional (744-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):

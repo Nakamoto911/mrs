@@ -5,8 +5,8 @@ Model: mlp
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.0346
-Real-Time IC: 0.0079
-Revision Risk: 77.34%
+Revised IC:  0.0067
+Real-Time IC: -0.3895
+Revision Risk: 5934.47%
 
 Verdict: REJECT

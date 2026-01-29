@@ -36,6 +36,8 @@
 - **SHAP values:** NumPy arrays (`experiments/shap/SPX_xgboost_shap.npy`)
 - **Hyperparameter history:** Optuna SQLite database
 - **Regime labels:** CSV (`experiments/regimes/SPX_regime_labels.csv`)
+- **Ensemble Manifest:** JSON (`experiments/models/SPX_Ensemble_Top5.json`)
+- **OOS Predictions:** CSV (`experiments/predictions/SPX_Ridge_preds.csv`)
 
 ### 1.3 Parallel Execution
 
@@ -67,7 +69,7 @@ Multi-select assets, checkboxes for models, radio buttons for target variable, s
 
 **Page 2: Model Comparison Dashboard**
 
-Dropdown to select asset, performance metrics table (IC, RMSE, R², Hit Rate), heatmap (models × metrics color-coded), time-series of OOS performance, forecast vs. realized scatter plot, export to Excel
+Dropdown to select asset, performance metrics table (IC, RMSE, R², Hit Rate) with **"Champion" Ensemble Highlighting**, heatmap (models × metrics color-coded), **"🧩 Ensemble Composition" expander** showing contribuing models, time-series of OOS performance, forecast vs. realized scatter plot, export to Excel
 
 **Page 3: Feature Importance Explorer**
 
@@ -75,7 +77,7 @@ Top 20 features bar chart (SHAP values), tabs for Overall/Bullish/Bearish regime
 
 **Page 4: Dominant Drivers Monitoring**
 
-Real-time monitoring sheet (rank, feature, SHAP, current percentile, signal), alert indicators for extreme ranges (>95th or <5th percentile), regime summary (Bullish/Bearish/Neutral), historical regime timeline
+Real-time monitoring sheet (rank, feature, SHAP, current percentile, signal) with **Ensemble Consensus mode**, alert indicators for extreme ranges (>95th or <5th percentile), regime summary (Bullish/Bearish/Neutral), **"Vote Split" progress bar** (consensus%), historical regime timeline
 
 **Page 5: Data & Feature Inspector**
 

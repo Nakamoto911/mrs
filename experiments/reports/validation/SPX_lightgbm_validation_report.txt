@@ -5,8 +5,8 @@ Model: lightgbm
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.1656
-Real-Time IC: 0.4710
-Revision Risk: -184.40%
+Revised IC:  0.2101
+Real-Time IC: 0.5540
+Revision Risk: -163.62%
 
 Verdict: DEPLOYABLE

@@ -5,8 +5,8 @@ Model: elastic_net
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.0876
-Real-Time IC: 0.7658
-Revision Risk: -774.01%
+Revised IC:  0.0601
+Real-Time IC: 0.7439
+Revision Risk: -1138.69%
 
 Verdict: DEPLOYABLE

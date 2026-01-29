@@ -38,6 +38,7 @@ from feature_engineering import (
 )
 from models import create_linear_model, create_tree_model, create_neural_model
 from evaluation import TimeSeriesCV, CrossValidator, compute_all_metrics, SHAPAnalyzer
+from evaluation.ensemble import EnsembleEvaluator
 
 
 # Configure logging
@@ -107,6 +108,7 @@ class ModelTournament:
             self.experiments_dir / 'regimes',
             self.experiments_dir / 'reports',
             self.experiments_dir / 'tournament_logs',
+            self.experiments_dir / 'predictions',
         ]
         for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
@@ -336,8 +338,8 @@ class ModelTournament:
                         asset=asset,
                         target='return'
                     )
-                    
                     elapsed = time.time() - start
+                    logger.info(f"    IC: {result.metrics.get('IC_mean', np.nan):.3f} ± {result.metrics.get('IC_std', np.nan):.3f}")
                     
                     # Store results
                     results.append({
@@ -350,25 +352,118 @@ class ModelTournament:
                         'n_folds': result.n_folds,
                         'time_seconds': elapsed
                     })
-                    
-                    logger.info(f"    IC: {result.metrics.get('IC_mean', np.nan):.3f} ± {result.metrics.get('IC_std', np.nan):.3f}")
+
+                    # Logic: Save OOS Predictions
+                    if result.predictions is not None:
+                        # File naming convention: {Asset}_{ModelName}_preds.csv
+                        pred_path = self.experiments_dir / 'predictions' / f'{asset}_{model_name}_preds.csv'
+                        preds_to_save = result.predictions.copy()
+                        # Ensure no NaN indices (can cause Join issues later)
+                        if preds_to_save.index.isna().any():
+                            preds_to_save = preds_to_save.loc[preds_to_save.index.notna()]
+                        preds_to_save.index.name = 'date'
+                        preds_to_save.to_csv(pred_path)
                     
                     # Save model
                     model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
                     joblib.dump(model, model_path)
                     
+                    # Store results ONLY after successful save if we want to be strict,
+                    # but here we want the IC even if save fails, so we just wrap the dump.
                 except Exception as e:
                     logger.error(f"    Error training {model_name}: {e}")
-                    results.append({
-                        'asset': asset,
-                        'model': model_name,
-                        'IC_mean': np.nan,
-                        'error': str(e)
-                    })
-        
-        # Save results
+                    # Only append failure if success wasn't already appended
+                    already_appended = any(r['asset'] == asset and r['model'] == model_name and not np.isnan(r.get('IC_mean', np.nan)) for r in results)
+                    if not already_appended:
+                        results.append({
+                            'asset': asset,
+                            'model': model_name,
+                            'IC_mean': np.nan,
+                            'error': str(e)
+                        })
+
+            # --- Ensemble Strategy Execution (Post-Asset Loop) ---
+            try:
+                # 1. Filter: Retrieve all successful results for the current asset
+                asset_results = [r for r in results if r['asset'] == asset and not np.isnan(r.get('IC_mean', np.nan))]
+                
+                # 2. Rank: Sort models by IC_mean (descending)
+                ranked_results = sorted(asset_results, key=lambda x: x['IC_mean'], reverse=True)
+                
+                # 3. Select: Identify the top models
+                ensemble_size = self.config.get('ensemble', {}).get('size', 5)
+                top_models = ranked_results[:ensemble_size]
+                
+                if len(top_models) >= 2:
+                    logger.info(f"  Executing Ensemble (Top {len(top_models)}) for {asset}...")
+                    
+                    # 4. Filter Prediction Paths
+                    pred_paths = []
+                    constituent_names = []
+                    for r in top_models:
+                        m_name = r['model']
+                        p_path = self.experiments_dir / 'predictions' / f'{asset}_{m_name}_preds.csv'
+                        if p_path.exists():
+                            pred_paths.append(p_path)
+                            constituent_names.append(m_name)
+                    
+                    if pred_paths:
+                        # 4. Execute Ensemble
+                        evaluator = EnsembleEvaluator()
+                        ensemble_df = evaluator.load_and_average(pred_paths)
+                        metrics = evaluator.compute_ensemble_metrics(ensemble_df)
+                        
+                        # 6. Save Ensemble Predictions
+                        ensemble_name = f"Ensemble_Top{len(top_models)}"
+                        ensemble_pred_path = self.experiments_dir / 'predictions' / f'{asset}_{ensemble_name}_preds.csv'
+                        ensemble_df.to_csv(ensemble_pred_path)
+                        
+                        # 7. Register Result
+                        results.append({
+                            'asset': asset,
+                            'model': ensemble_name,
+                            'IC_mean': metrics.get('IC_mean', np.nan),
+                            'RMSE_mean': metrics.get('RMSE_mean', np.nan),
+                            'hit_rate_mean': metrics.get('hit_rate_mean', np.nan),
+                            'n_folds': top_models[0]['n_folds'],
+                            'time_seconds': 0.0, # Ensemble is fast
+                        })
+                        
+                        # 8. Generate Manifest
+                        manifest_path = self.experiments_dir / 'models' / f'{asset}_{ensemble_name}.json'
+                        manifest = {
+                            "models": constituent_names,
+                            "weights": "equal",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        with open(manifest_path, 'w') as f:
+                            json.dump(manifest, f, indent=4)
+                        
+                        logger.info(f"    Ensemble IC: {metrics.get('IC_mean', np.nan):.3f}")
+                
+            except Exception as e:
+                logger.error(f"  Error creating ensemble for {asset}: {e}")
+
+        # Save results - carefully merging with existing to avoid overwriting other assets
+        results_path = self.experiments_dir / 'cv_results' / 'tournament_results.csv'
         results_df = pd.DataFrame(results)
-        results_df.to_csv(self.experiments_dir / 'cv_results' / 'tournament_results.csv', index=False)
+        
+        if results_path.exists():
+            try:
+                existing_df = pd.read_csv(results_path)
+                # Filter out old results for the assets we just ran
+                # "keep rows where asset is NOT in the current run's assets"
+                assets_ran = set(results_df['asset'].unique())
+                preserved_df = existing_df[~existing_df['asset'].isin(assets_ran)]
+                
+                if not preserved_df.empty:
+                    results_df = pd.concat([preserved_df, results_df], ignore_index=True)
+                    
+            except Exception as e:
+                logger.error(f"Error merging with existing results: {e}")
+                # Fallback: Just save what we have if merge fails (better than crashing)
+        
+        results_df.to_csv(results_path, index=False)
         
         self.results = results_df
         return results_df
@@ -384,6 +479,10 @@ class ModelTournament:
             return
         
         # Best models per asset
+        if self.results['IC_mean'].dropna().empty:
+            logger.warning("No valid IC metrics found in results. Skipping best models report.")
+            return
+            
         best_models = self.results.loc[self.results.groupby('asset')['IC_mean'].idxmax()]
         
         print("\n" + "=" * 60)

@@ -1,0 +1,11 @@
+{
+    "models": [
+        "random_forest",
+        "xgboost",
+        "lightgbm",
+        "elastic_net",
+        "lasso"
+    ],
+    "weights": "equal",
+    "timestamp": "2026-01-29T12:12:34.090315"
+}

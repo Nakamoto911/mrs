@@ -5,8 +5,8 @@ Model: random_forest
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.1197
-Real-Time IC: 0.4604
-Revision Risk: -284.63%
+Revised IC:  0.1718
+Real-Time IC: 0.2255
+Revision Risk: -31.27%
 
 Verdict: DEPLOYABLE

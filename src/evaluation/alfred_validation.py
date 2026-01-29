@@ -11,11 +11,53 @@ import logging
 from typing import List, Dict, Optional
 from scipy.stats import spearmanr
 from pathlib import Path
+import json
 
 from src.preprocessing.alfred_loader import ALFREDVintageLoader
 from src.feature_engineering.frozen_pipeline import FrozenFeaturePipeline
 
 logger = logging.getLogger(__name__)
+
+class EnsembleWrapper:
+    """
+    Wraps multiple models to provide a single 'predict' interface 
+    for the validation script.
+    """
+    def __init__(self, models):
+        self.models = models
+        
+        # Aggregate features from all constituent models
+        all_features = set()
+        for m in self.models:
+            feats = []
+            if hasattr(m, 'feature_names_in_'):
+                feats = m.feature_names_in_
+            elif hasattr(m, 'feature_names'):
+                feats = m.feature_names
+            elif hasattr(m, 'features'):
+                feats = m.features
+            
+            if hasattr(feats, 'tolist'):
+                all_features.update(feats.tolist())
+            else:
+                all_features.update(feats)
+        
+        self.feature_names_in_ = sorted(list(all_features))
+
+    def predict(self, X):
+        """
+        Runs prediction on all constituent models and returns the average.
+        """
+        preds = []
+        for model in self.models:
+            # Handle both Series and Array returns
+            p = model.predict(X)
+            if hasattr(p, 'values'):
+                p = p.values
+            preds.append(p)
+        
+        # Average
+        return np.mean(preds, axis=0)
 
 class ALFREDValidator:
     """
@@ -28,22 +70,50 @@ class ALFREDValidator:
                  transform_codes_path: str = "data/raw/fred_md_transforms.csv"):
         """
         Args:
-            model_path: Path to the .pkl file of the trained model.
+            model_path: Path to the .pkl or .json file of the trained model.
             validation_dates: List of semi-annual dates for simulation.
             vintages_dir: Directory containing vintage CSVs.
             transform_codes_path: Path to FRED-MD transformation codes.
         """
-        self.model = joblib.load(model_path)
+        model_p = Path(model_path)
+        if model_p.suffix == '.json':
+            logger.info(f"Detected Ensemble Manifest: {model_p.name}")
+            with open(model_p, 'r') as f:
+                manifest = json.load(f)
+            
+            constituent_names = manifest['models']
+            loaded_models = []
+            
+            # Assumes models are in the same directory or standard models directory
+            models_dir = model_p.parent
+            
+            # Parse asset from filename (e.g., GOLD_Ensemble_Top5.json)
+            asset = model_p.stem.split('_')[0]
+            
+            for m_name in constituent_names:
+                c_path = models_dir / f"{asset}_{m_name}.pkl"
+                if not c_path.exists():
+                     raise FileNotFoundError(f"Ensemble constituent missing: {c_path}")
+                loaded_models.append(joblib.load(c_path))
+                
+            self.model = EnsembleWrapper(loaded_models)
+            logger.info(f"Successfully loaded Ensemble with {len(loaded_models)} models")
+        else:
+            self.model = joblib.load(model_path)
         
         # Identify features needed by the model
         if hasattr(self.model, 'feature_names_in_'):
-            self.features_needed = self.model.feature_names_in_.tolist()
+            self.features_needed = self.model.feature_names_in_
         elif hasattr(self.model, 'feature_names'):
             self.features_needed = self.model.feature_names
         elif hasattr(self.model, 'features'):
             self.features_needed = self.model.features
         else:
             raise AttributeError("Model does not have 'feature_names_in_', 'feature_names', or 'features' attribute.")
+            
+        # Convert to list if it's a numpy array
+        if hasattr(self.features_needed, 'tolist'):
+            self.features_needed = self.features_needed.tolist()
             
         self.loader = ALFREDVintageLoader(vintages_dir)
         
