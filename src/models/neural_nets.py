@@ -119,8 +119,8 @@ class MLPWrapper(BaseEstimator):
         # 1. Compute rolling stats (shifted by 1)
         rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
         
-        # 2. Impute with rolling medians, then bfill for the first row, then 0.0 as final fallback
-        X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
+        # 2. Impute with rolling medians, then 0.0 as final fallback
+        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
         
         # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
         self.fill_values = X_filtered.median().fillna(0.0)
@@ -302,9 +302,9 @@ class LSTMWrapper(BaseEstimator):
         X_filtered = X_sync[self.feature_names]
         
         # 3. Robust Imputation (Preserve Sequence/Temporal structure)
-        # Use expanding median to avoid look-ahead
+        # Use expanding median to avoid look-ahead, then 0.0 as final fallback
         rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
-        X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
+        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
         
         # Store fill values for inference
         self.fill_values = X_filtered.median().fillna(0.0)

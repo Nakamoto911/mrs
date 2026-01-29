@@ -133,8 +133,8 @@ class TreeModelWrapper(BaseEstimator):
         # 1. Compute rolling stats (shifted by 1)
         rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
         
-        # 2. Impute with rolling medians, then bfill for the first row, then 0.0 as final fallback
-        X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
+        # 2. Impute with rolling medians, then 0.0 as final fallback
+        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
         
         # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
         self.fill_values_ = X_filtered.median().fillna(0.0)
