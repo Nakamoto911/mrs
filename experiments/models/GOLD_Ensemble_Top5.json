@@ -1,11 +1,11 @@
 {
     "models": [
-        "xgboost",
         "random_forest",
+        "xgboost",
         "lightgbm",
-        "mlp",
-        "lasso"
+        "lasso",
+        "elastic_net"
     ],
     "weights": "equal",
-    "timestamp": "2026-01-29T15:58:04.510806"
+    "timestamp": "2026-01-29T17:34:07.610833"
 }

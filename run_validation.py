@@ -69,7 +69,32 @@ def run_single_validation(asset, model_name, start_year, returns=None, tournamen
         returns.index = returns.index.to_period('M').to_timestamp()
 
     # Run Loop
-    validation_results = validator.run_validation(returns)
+    logger.info(f"Starting historical simulation from {start_year}...")
+    
+    # Context manager to suppress feature engineering logs
+    class QuietFeatureEngineering:
+        def __enter__(self):
+            loggers = [
+                'src.feature_engineering.ratios',
+                'src.feature_engineering.quintiles',
+                'src.feature_engineering.momentum',
+                'src.feature_engineering.cointegration',
+                'src.feature_engineering.frozen_pipeline',
+                'src.preprocessing.transformations'
+            ]
+            self.old_levels = {}
+            for name in loggers:
+                l = logging.getLogger(name)
+                self.old_levels[name] = l.level
+                l.setLevel(logging.WARNING)
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            for name, level in self.old_levels.items():
+                logging.getLogger(name).setLevel(level)
+
+    with QuietFeatureEngineering():
+        validation_results = validator.run_validation(returns)
+        
     metrics = validator.compute_metrics(validation_results, revised_ic)
     
     # Check thresholds

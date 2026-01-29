@@ -303,6 +303,9 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
         Returns:
             self
         """
+        if hasattr(X, 'columns'):
+            self.feature_names_in_ = X.columns.tolist()
+            
         self.analyze_pairs(X)
         
         # Store vectors for transform

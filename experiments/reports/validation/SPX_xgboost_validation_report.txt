@@ -5,8 +5,8 @@ Model: xgboost
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.1718
-Real-Time IC: 0.5512
-Revision Risk: -220.94%
+Revised IC:  0.1902
+Real-Time IC: 0.5068
+Revision Risk: -166.51%
 
 Verdict: DEPLOYABLE

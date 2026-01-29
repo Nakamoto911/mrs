@@ -3,9 +3,9 @@
         "lightgbm",
         "random_forest",
         "xgboost",
-        "ridge",
-        "lasso"
+        "mlp",
+        "ridge"
     ],
     "weights": "equal",
-    "timestamp": "2026-01-29T15:54:41.058095"
+    "timestamp": "2026-01-29T17:30:32.220863"
 }

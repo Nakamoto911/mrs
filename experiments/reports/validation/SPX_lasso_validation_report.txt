@@ -5,8 +5,8 @@ Model: lasso
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  -0.0179
-Real-Time IC: 0.6959
-Revision Risk: 3986.00%
+Revised IC:  0.0000
+Real-Time IC: 0.7543
+Revision Risk: 0.00%
 
-Verdict: REJECT
+Verdict: DEPLOYABLE

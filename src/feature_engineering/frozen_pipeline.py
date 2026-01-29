@@ -34,7 +34,7 @@ class FrozenFeaturePipeline:
         """
         Runs the feature engineering pipeline and filters to required features.
         """
-        logger.info(f"Transforming vintage with {len(vintage_df)} rows")
+        logger.debug(f"Transforming vintage with {len(vintage_df)} rows")
         
         # 1. Basic Transformations
         transformer = FREDMDTransformer(self.transform_codes)

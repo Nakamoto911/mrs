@@ -102,12 +102,27 @@ class ALFREDValidator:
             self.model = joblib.load(model_path)
         
         # Identify features needed by the model
+        # Identify features needed by the model
         if hasattr(self.model, 'feature_names_in_'):
             self.features_needed = self.model.feature_names_in_
         elif hasattr(self.model, 'feature_names'):
             self.features_needed = self.model.feature_names
         elif hasattr(self.model, 'features'):
             self.features_needed = self.model.features
+        # Handle Pipeline explicitly if standard attributes are missing
+        elif hasattr(self.model, 'steps'):
+            # Try to get features from the first step (transformer) or last step (estimator)
+            try:
+                # Often the first step knows the input features if it was fitted
+                if hasattr(self.model.steps[0][1], 'feature_names_in_'):
+                    self.features_needed = self.model.steps[0][1].feature_names_in_
+                # Or check if any step has it
+                elif hasattr(self.model.steps[-1][1], 'feature_names_in_'):
+                     self.features_needed = self.model.steps[-1][1].feature_names_in_
+                else:
+                    raise AttributeError("Could not find feature_names_in_ in pipeline steps")
+            except Exception as e:
+                raise AttributeError(f"Failed to extract features from Pipeline: {e}")
         else:
             raise AttributeError("Model does not have 'feature_names_in_', 'feature_names', or 'features' attribute.")
             

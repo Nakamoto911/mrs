@@ -1,9 +1,0 @@
-{
-    "models": [
-        "lasso",
-        "elastic_net",
-        "ridge"
-    ],
-    "weights": "equal",
-    "timestamp": "2026-01-29T15:28:47.564802"
-}

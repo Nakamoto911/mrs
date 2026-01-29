@@ -400,6 +400,10 @@ class ModelTournament:
                         preds_to_save.to_csv(pred_path)
                     
                     # Save model (save the full pipeline)
+                    # We must fit the pipeline on the full dataset before saving
+                    logger.info(f"    Refitting {model_name} on full history for persistence...")
+                    pipeline.fit(X, y)
+                    
                     model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
                     joblib.dump(pipeline, model_path)
                     
@@ -594,12 +598,17 @@ def main():
     # Run feature pipeline
     feature_file = tournament.experiments_dir / 'features' / f'features_{datetime.now().strftime("%Y%m%d")}.parquet'
     
-    if not args.eval_only:
-        if feature_file.exists():
-            logger.info(f"Features found at {feature_file}. Skipping generation.")
-            tournament.features = pd.read_parquet(feature_file)
-        else:
-            tournament.run_feature_pipeline(args.fred_api_key)
+    # Run feature pipeline
+    feature_file = tournament.experiments_dir / 'features' / f'features_{datetime.now().strftime("%Y%m%d")}.parquet'
+    
+    # Always try to load existing features first
+    if feature_file.exists():
+        logger.info(f"Features found at {feature_file}. Loading...")
+        tournament.features = pd.read_parquet(feature_file)
+    
+    # If not found and NOT eval-only, run pipeline
+    if tournament.features is None and not args.eval_only:
+        tournament.run_feature_pipeline(args.fred_api_key)
     
     if args.features_only:
         logger.info("Feature pipeline complete. Exiting.")

@@ -326,6 +326,9 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         Returns:
             self
         """
+        if hasattr(X, 'columns'):
+            self.feature_names_in_ = X.columns.tolist()
+            
         # If y is provided and selection_method is 'univariate_ic' or 'auto',
         # we can use it for representative selection.
         self.selected_features_ = self.select_all_representatives(X, target=y)

@@ -48,22 +48,61 @@ class SHAPAnalyzer:
         """
         try:
             import shap
+            from sklearn.pipeline import Pipeline
         except ImportError:
             logger.warning("SHAP not available, using permutation importance")
             return self._fallback_importance(model, X)
         
-        self.feature_names = X.columns.tolist()
-        X_clean = X.fillna(0)
+        # Handle Pipeline
+        if isinstance(model, Pipeline):
+            try:
+                # Transform features using all steps except the last one
+                if len(model.steps) > 1:
+                    logger.info("Transforming features using pipeline pre-processors for SHAP...")
+                    transformers = Pipeline(model.steps[:-1])
+                    X = transformers.transform(X)
+                
+                # Get the final estimator
+                model = model.steps[-1][1]
+                logger.info(f"Extracted estimator from pipeline: {type(model).__name__}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to process pipeline for SHAP: {e}")
+                return self._fallback_importance(model, X)
+
+                # Get the final estimator
+                model = model.steps[-1][1]
+                logger.info(f"Extracted estimator from pipeline: {type(model).__name__}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to process pipeline for SHAP: {e}")
+                return self._fallback_importance(model, X)
+
+        if isinstance(X, pd.DataFrame):
+            self.feature_names = X.columns.tolist()
+            X_clean = X.fillna(0)
+        else:
+            # Handle numpy array (e.g. from StandardScaler)
+            self.feature_names = [f"feature_{i}" for i in range(X.shape[1])]
+            X_clean = pd.DataFrame(X, columns=self.feature_names).fillna(0)
         
         try:
             if model_type == 'tree':
                 # Tree-based models (XGBoost, LightGBM, RandomForest)
                 if hasattr(model, 'model'):
-                    # Wrapper model
+                    # Wrapper model (some implementations)
                     underlying = model.model
+                elif hasattr(model, 'model_'):
+                    # Wrapper model (TreeModelWrapper)
+                    underlying = model.model_
                 else:
                     underlying = model
                 
+                # Ensure we have the actual estimator (sometimes wrappers wrap wrappers)
+                if isinstance(underlying, Pipeline):
+                     logger.warning("Nested pipeline detected in wrapper, attempting to extract final step")
+                     underlying = underlying.steps[-1][1]
+
                 self.explainer = shap.TreeExplainer(underlying)
                 self.shap_values = self.explainer.shap_values(X_clean)
             
