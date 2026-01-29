@@ -30,7 +30,7 @@ class TreeModelWrapper:
         self.kwargs = kwargs
         self.model = None
         self.feature_names = None
-        self.imputer = SimpleImputer(strategy='median')
+        self.fill_values = None
         
     def _create_model(self):
         """Create the underlying model."""
@@ -127,11 +127,15 @@ class TreeModelWrapper:
         self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
         X_filtered = X_sync[self.feature_names]
         
-        # 3. Median Imputation
-        # Tree models can handle some missing data, but sklearn implementation often requires clean input
-        # We use median imputation to be safe and consistent
-        X_imputed_arr = self.imputer.fit_transform(X_filtered)
-        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X_filtered.index)
+        # 3. Strict Rolling Imputation (No Look-ahead)
+        # 1. Compute rolling stats (shifted by 1)
+        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
+        
+        # 2. Impute with rolling medians, then bfill for the first row, then 0.0 as final fallback
+        X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
+        
+        # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
+        self.fill_values = X_filtered.median().fillna(0.0)
         
         if len(X_imputed) < 20:
             raise ValueError(f"Insufficient data for fitting: {len(X_imputed)}")
@@ -159,8 +163,7 @@ class TreeModelWrapper:
         X_filtered = X[self.feature_names]
         
         # Impute
-        X_imputed_arr = self.imputer.transform(X_filtered)
-        X_filled = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X.index)
+        X_filled = X_filtered.fillna(self.fill_values)
         
         predictions = self.model.predict(X_filled)
         

@@ -42,7 +42,7 @@ class LinearModelWrapper:
         self.kwargs = kwargs
         self.model = None
         self.scaler = StandardScaler()
-        self.imputer = SimpleImputer(strategy='median')
+        self.fill_values = None
         self.feature_names = None
         self.selected_features = None
         
@@ -108,12 +108,15 @@ class LinearModelWrapper:
         if len(self.selected_features) == 0:
             raise ValueError(f"No valid features remaining after pruning (N={n_samples})")
 
-        # 4. Median Imputation
-        X_imputed = pd.DataFrame(
-            self.imputer.fit_transform(X_filtered),
-            columns=self.selected_features,
-            index=X_filtered.index
-        )
+        # 4. Strict Rolling Imputation (No Look-ahead)
+        # 1. Compute rolling stats (shifted by 1)
+        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
+        
+        # 2. Impute with rolling medians, then bfill for the first row, then 0.0 as final fallback
+        X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
+        
+        # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
+        self.fill_values = X_filtered.median().fillna(0.0)
         
         # 5. Scale features
         X_scaled = self.scaler.fit_transform(X_imputed)
@@ -140,9 +143,8 @@ class LinearModelWrapper:
         # Filter to selected features
         X_filtered = X[self.selected_features]
         
-        # Impute and Scale (handle potential new NaNs in predict data)
-        X_imputed_arr = self.imputer.transform(X_filtered)
-        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.selected_features, index=X.index)
+        # Impute and Scale (handle potential new NaNs in predict data using frozen values)
+        X_imputed = X_filtered.fillna(self.fill_values)
         X_scaled = self.scaler.transform(X_imputed)
         
         predictions = self.model.predict(X_scaled)

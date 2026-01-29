@@ -55,7 +55,7 @@ class MLPWrapper:
         
         self.model = None
         self.scaler = StandardScaler()
-        self.imputer = SimpleImputer(strategy='median')
+        self.fill_values = None
         self.feature_names = None
         self.input_dim = None
         
@@ -111,9 +111,15 @@ class MLPWrapper:
         self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
         X_filtered = X_sync[self.feature_names]
         
-        # 3. Median Imputation
-        X_imputed_arr = self.imputer.fit_transform(X_filtered)
-        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X_filtered.index)
+        # 3. Strict Rolling Imputation (No Look-ahead)
+        # 1. Compute rolling stats (shifted by 1)
+        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
+        
+        # 2. Impute with rolling medians, then bfill for the first row, then 0.0 as final fallback
+        X_imputed = X_filtered.fillna(rolling_medians).bfill().fillna(0.0)
+        
+        # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
+        self.fill_values = X_filtered.median().fillna(0.0)
         
         # 4. Scale features
         # Note: robust scaling + dropout helps NNs handle noise
@@ -149,8 +155,7 @@ class MLPWrapper:
         X_filtered = X[self.feature_names]
         
         # Impute
-        X_imputed_arr = self.imputer.transform(X_filtered)
-        X_imputed = pd.DataFrame(X_imputed_arr, columns=self.feature_names, index=X.index)
+        X_imputed = X_filtered.fillna(self.fill_values)
         
         # Scale
         X_scaled = self.scaler.transform(X_imputed)

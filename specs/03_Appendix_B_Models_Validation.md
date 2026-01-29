@@ -74,7 +74,7 @@ Optuna Bayesian optimization: 100 trials per model, 5-fold time-series CV
 To maintain estimation integrity across the high-dimensional (744-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):
 
 **Data Integrity Protocols:**
-- **Sparse Feature Imputation:** Median imputation applied to features with < 20% missingness. Series exceeding this threshold are pruned PIT (Point-In-Time) to prevent signal dilution. This applies to both linear models and tree-based/neural models which often fail with raw NaN inputs in small-N folds.
+- **Sparse Feature Imputation:** **Strict Rolling Imputation** (Expanding Median) applied to features with < 20% missingness. By calculating medians on an expanding window and shifting by 1 month, we ensure that row $t$ is imputed using only data from $t-1$, eliminating look-ahead bias. This applies to all model families (Linear, Tree, Neural) to ensure uniform Point-in-Time validity. Series exceeding the missingness threshold are pruned PIT (Point-In-Time) to prevent signal dilution.
 - **Variance Filtering:** Automatic detection and exclusion of zero-variance or near-constant features that degrade `StandardScaler` performance.
 - **Degrees of Freedom Guard:** Hard requirement of $N > K + 20$ (samples > features + 20) for valid estimation. If violated in any CV fold, the system enforces **Automated PIT Feature Pruning**, ranking and keeping only the top $(N-20)$ features based on maximum data density (lowest NaNs) and secondarily by cross-sectional variance.
 
