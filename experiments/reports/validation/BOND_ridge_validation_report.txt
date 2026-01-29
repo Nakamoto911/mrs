@@ -5,8 +5,8 @@ Model: ridge
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.1179
-Real-Time IC: 0.7795
-Revision Risk: -561.02%
+Revised IC:  0.0168
+Real-Time IC: 0.8321
+Revision Risk: -4839.07%
 
 Verdict: DEPLOYABLE

@@ -11,6 +11,8 @@ from .data_loader import (
     load_all_data
 )
 
+from .alignment import LaggedAligner
+
 from .stationarity import (
     StationarityTester,
     StationarityResult,
@@ -33,5 +35,6 @@ __all__ = [
     'identify_level_stationary_features',
     'FREDMDTransformer',
     'CustomTransformer',
-    'standardize_features'
+    'standardize_features',
+    'LaggedAligner'
 ]

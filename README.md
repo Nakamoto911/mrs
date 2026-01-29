@@ -6,7 +6,7 @@ A quantitative research platform for discovering which macroeconomic variables d
 
 1. **Asset-Specific Regime Detection**: Each asset gets independent bullish/bearish classification
 2. **Hierarchical Clustering**: Eliminates feature substitution instability at 0.80 similarity threshold
-3. **Two-Phase Data Strategy**: Discovery on revised data, validation on ALFRED real-time vintages
+3. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages
 4. **Regime-Level Quintile Features**: Captures regime-dependent dynamics
 
 ## Quick Start

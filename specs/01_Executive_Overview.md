@@ -66,7 +66,7 @@ Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "ac
 
 ### 3. Two-Phase Data Strategy: Revised → Real-Time
 
-- **DISCOVERY** on final revised FRED-MD: Find true relationships without measurement noise
+- **DISCOVERY** on lagged revised FRED-MD: Find true relationships without measurement noise
 - **VALIDATION** on ALFRED real-time vintages: Test with data actually available to investors
 - Compute Revision Risk (typical IC degradation 15–25%)
 - Deploy only models with IC > 0.15 on real-time data AND Revision Risk < 30%

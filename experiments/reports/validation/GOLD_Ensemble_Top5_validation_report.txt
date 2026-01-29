@@ -5,8 +5,8 @@ Model: Ensemble_Top5
 Validation Period: 2000-2024
 
 Performance Metrics:
-Revised IC:  0.3830
-Real-Time IC: 0.8729
-Revision Risk: -127.90%
+Revised IC:  0.4240
+Real-Time IC: 0.8704
+Revision Risk: -105.29%
 
 Verdict: DEPLOYABLE

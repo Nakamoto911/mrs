@@ -75,13 +75,13 @@ A single PIT observation for date $t$ is NOT simply a row from a table; it is th
 
 **Objective:** Find TRUE economic relationships
 
-**Data:** Final Revised FRED-MD (Current Vintage)
+**Data:** Final Revised FRED-MD (Current Vintage) aligned via **Lagged Alignment Protocol**.
 
-- **Why:** GDP revisions can be 1–2% — preliminary data adds noise
-- **Example:** Initial GDP = 2.0%, Final = 3.5% → the 3.5% drove returns
-- **Benefits:** Enables clean SHAP analysis — importance reflects economics, not data quality
-- **Models learn:** Stable fundamental relationships
-- **Process:** Download latest FRED-MD → Train all models → Identify dominant drivers
+- **Lagged Alignment:** Features are shifted forward by `publication_lag_months` (default = 1). To predict returns starting Feb 1, the model only sees data dated Jan 1 or earlier.
+- **Why:** GDP revisions can be 1–2% — preliminary data adds noise. Discovery finds the "true" signals.
+- **Example:** Initial GDP = 2.0%, Final = 3.5% → the 3.5% drove returns.
+- **Benefits:** Enables clean SHAP analysis — importance reflects economics, not data quality.
+- **Process:** Download latest FRED-MD → Apply Lagged Alignment → Train all models → Identify dominant drivers.
 
 ### 2.2 Phase 2: Validation (ALFRED Real-Time)
 

@@ -27,7 +27,7 @@ import joblib
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
-from preprocessing import FREDMDLoader, AssetPriceLoader, FREDMDTransformer
+from preprocessing import FREDMDLoader, AssetPriceLoader, FREDMDTransformer, LaggedAligner
 from preprocessing import identify_level_stationary_features
 from feature_engineering import (
     generate_all_ratio_features,
@@ -324,12 +324,19 @@ class ModelTournament:
             
             y = self.targets[target_key]
             
-            # Aligned features and target (LinearModelWrapper now handles PIT pruning)
-            common_idx = self.features.index.intersection(y.dropna().index)
-            X = self.features.loc[common_idx]
-            y = y.loc[common_idx]
+            # --- LAG-AWARE ALIGNMENT ---
+            # Fetch lag from config, default to 1 (conservative for Monthly data)
+            pub_lag = self.config.get('data', {}).get('alfred', {}).get('publication_lag_months', 1)
             
-            logger.info(f"    Forwarding {len(X.columns)} features and {len(X)} samples to model layer")
+            # Initialize Aligner
+            aligner = LaggedAligner(lag_months=pub_lag)
+            
+            # Align Data
+            # This effectively shifts X forward, ensuring X[t] is actually data from t-lag
+            X, y = aligner.align_features_and_targets(self.features, y.dropna())
+            
+            logger.info(f"    Aligned data with {pub_lag} month lag. {len(X)} samples remaining.")
+            logger.info(f"    Forwarding {len(X.columns)} features to model layer")
             
             for model_name in models:
                 logger.info(f"  Training {model_name}...")
