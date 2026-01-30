@@ -34,3 +34,19 @@ coverage.xml
 # IDEs
 .vscode/
 .idea/
+
+# Experiments and Results
+experiments/
+tournament_results.csv
+batch_validation_summary.csv
+
+# Data
+data/raw/vintages/
+data/fred_md/
+{data/
+*.parquet
+*.joblib
+
+# Models and Backups
+models/
+models_backup_*/
