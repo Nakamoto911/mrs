@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.base import BaseEstimator
+from .lstm_v2 import LSTMWrapperV2
 
 logger = logging.getLogger(__name__)
 
@@ -425,6 +426,8 @@ def create_neural_model(model_type: str, **kwargs):
     if model_type == 'mlp':
         return MLPWrapper(**kwargs)
     elif model_type == 'lstm':
+        return LSTMWrapperV2(**kwargs)
+    elif model_type == 'lstm_legacy':
         return LSTMWrapper(**kwargs)
     else:
         raise ValueError(f"Unknown model type: {model_type}")

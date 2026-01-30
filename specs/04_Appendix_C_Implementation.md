@@ -158,6 +158,7 @@ macro_regime_system/
 **Optimization Strategies:**
 
 - **GPU acceleration:** LSTM training drops from 60 min to 15 min per asset
+- **LSTM V2 Optimizations:** Early stopping and sample size gating reduce wasted computation on small datasets
 - **Caching:** Load pre-computed features, avoid re-transformation
 - **Incremental learning:** Monthly updates use existing models, quarterly full retraining
 - **Smart hyperparameter init:** Use previous best as Optuna starting point

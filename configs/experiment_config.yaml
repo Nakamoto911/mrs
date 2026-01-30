@@ -224,11 +224,21 @@ models:
       learning_rate_range: [0.0001, 0.01]
     lstm:
       enabled: true
-      sequence_length: 24  # months
-      hidden_units_range: [32, 128]
-      n_layers_range: [1, 3]
-      dropout_range: [0.1, 0.5]
-      learning_rate_range: [0.0001, 0.01]
+      sequence_strategy: "medium"  # short, medium, adaptive, full
+      # sequence_length: 24  # Optional override
+      hidden_size: 32       # Reduced from 64
+      n_layers: 1           # Reduced from 2
+      use_attention: true   # Temporal attention
+      dropout: 0.3          # Increased from 0.2
+      weight_decay: 0.01    # L2 regularization
+      input_noise_std: 0.1  # Noise injection
+      learning_rate: 0.001
+      epochs: 100
+      batch_size: 16        # Smaller batches
+      patience: 15          # Early stopping
+      min_epochs: 20
+      mc_dropout_samples: 50
+      min_sequences: 30     # Warn if fewer sequences
     tcn:
       enabled: false  # Optional
       kernel_size_range: [2, 5]

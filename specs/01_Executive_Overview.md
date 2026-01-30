@@ -105,7 +105,7 @@ Statistical Jump Models label historical bullish/bearish periods per asset. Trai
 
 ### Stage 3: Model Tournament & Selection
 
-10+ models compete: Ridge, Lasso, Elastic Net, VECM, Random Forest, XGBoost, LightGBM, LSTM. Time-series CV with expanding windows. Optuna hyperparameter optimization (100 trials). Select best via IC for returns, RMSE for volatility. **Time:** 6–9 hours full tournament. *(See Appendix B Section 2–3)*
+10+ models compete: Ridge, Lasso, Elastic Net, VECM, Random Forest, XGBoost, LightGBM, LSTM V2. Time-series CV with expanding windows. Optuna hyperparameter optimization (100 trials). Select best via IC for returns, RMSE for volatility. **Time:** 6–9 hours full tournament. *(See Appendix B Section 2–3)*
 
 ### Stage 4: ALFRED Real-Time Validation
 

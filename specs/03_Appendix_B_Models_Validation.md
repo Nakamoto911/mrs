@@ -59,7 +59,7 @@ LightGBM classifier predicts 6-month ahead regime probability using current macr
 
 **Neural Networks:**
 - Feedforward MLP — Multi-layer perceptron with dropout. Requires robust scaling and imputation to identical standards as linear models.
-- LSTM — Temporal dependencies, 12–24 month sequences.
+- LSTM V2 — Configurable sequence strategies (Short/Medium/Adaptive), temporal attention mechanism, MC Dropout for uncertainty, and strict sample-size gating to prevent overfitting.
 - Temporal Convolutional Network — Alternative to LSTM.
 
 ### 2.2 Hyperparameter Optimization

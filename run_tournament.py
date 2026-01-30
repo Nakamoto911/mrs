@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import yaml
 import pandas as pd
 import numpy as np
@@ -57,6 +57,41 @@ from feature_engineering.cointegration_validator import (
 )
 from feature_engineering.hierarchical_clustering import HierarchicalSelector
 from models.ensemble import EnsembleModel
+from models.lstm_v2 import get_sequence_length, SequenceStrategy
+
+
+def should_run_lstm(X: pd.DataFrame, config: dict) -> Tuple[bool, str]:
+    """
+    Determine if LSTM should be run based on sample size.
+    
+    Returns:
+        (should_run, reason)
+    """
+    n_samples = len(X)
+    
+    # Get effective sequence length
+    seq_len = get_sequence_length(
+        SequenceStrategy(config.get('sequence_strategy', 'medium')),
+        config.get('forecast_horizon', 24)
+    )
+    
+    n_independent = n_samples // seq_len
+    min_required = config.get('min_sequences', 30)
+    
+    if n_independent < min_required:
+        return False, (
+            f"Insufficient independent sequences: {n_independent} < {min_required}. "
+            f"LSTM skipped to avoid overfitting."
+        )
+    
+    # Warn if marginal
+    if n_independent < min_required * 2:
+        logger.debug(
+            f"Marginal sample size for LSTM: {n_independent} sequences. "
+            "Results should be interpreted with caution."
+        )
+    
+    return True, "OK"
 
 
 # Configure logging
@@ -95,7 +130,7 @@ class ModelTournament:
         'xgboost': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
         'lightgbm': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
         'mlp': {'type': 'neural', 'params': {'hidden_layers': [64, 32], 'epochs': 50}},
-        'lstm': {'type': 'neural', 'params': {'sequence_length': 24, 'hidden_size': 64, 'n_layers': 2, 'epochs': 50}},
+        'lstm': {'type': 'neural', 'params': {}},
     }
     
     def __init__(self, config_path: str = 'configs/experiment_config.yaml'):
@@ -389,6 +424,18 @@ class ModelTournament:
             latest_fold_metadata = None
 
             for model_name in models:
+                # Gating logic for LSTM
+                if 'lstm' in model_name:
+                    model_config = self.MODEL_CONFIGS.get(model_name, {}) # This gets the top-level config, confusing?
+                    # Actually self.MODEL_CONFIGS only has minimal params.
+                    # We need the full config from self.config['models']['neural']['lstm']
+                    lstm_full_config = self.config.get('models', {}).get('neural', {}).get('lstm', {})
+                    
+                    should_run, reason = should_run_lstm(X, lstm_full_config)
+                    if not should_run:
+                        logger.warning(f"  Skipping {model_name}: {reason}")
+                        continue
+
                 logger.info(f"  Training {model_name}...")
                 
                 try:
