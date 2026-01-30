@@ -212,7 +212,10 @@ class ModelTournament:
         
         # Save features
         timestamp = datetime.now().strftime('%Y%m%d')
-        reduced_features.to_parquet(self.experiments_dir / 'features' / f'base_features_{timestamp}.parquet')
+        try:
+            reduced_features.to_parquet(self.experiments_dir / 'features' / f'base_features_{timestamp}.parquet')
+        except Exception as e:
+            logger.warning(f"Failed to save base features to parquet (likely permission issue): {e}")
         # cluster_info.to_csv(self.experiments_dir / 'features' / f'clusters_{timestamp}.csv')
         
         elapsed = time.time() - start_time
@@ -640,7 +643,9 @@ class ModelTournament:
                             
                             # Compute SHAP
                             analyzer = SHAPAnalyzer(n_top_features=10)
-                            if any(t in model_name for t in ['forest', 'boost', 'gbm']):
+                            if 'Ensemble' in model_name:
+                                model_type = 'ensemble'
+                            elif any(t in model_name for t in ['forest', 'boost', 'gbm']):
                                 model_type = 'tree'
                             elif any(t in model_name for t in ['mlp', 'lstm']):
                                 model_type = 'neural'

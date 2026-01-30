@@ -1,0 +1,12 @@
+ALFRED REAL-TIME VALIDATION REPORT
+==================================
+Asset: GOLD
+Model: mlp
+Validation Period: 2000-2024
+
+Performance Metrics:
+Revised IC:  -0.0099
+Real-Time IC: 0.0190
+Revision Risk: 292.74%
+
+Verdict: REJECT

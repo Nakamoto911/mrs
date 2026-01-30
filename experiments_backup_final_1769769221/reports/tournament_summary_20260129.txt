@@ -1,0 +1,10 @@
+ASSET-SPECIFIC MACRO REGIME DETECTION SYSTEM
+Tournament Results Summary
+Date: 2026-01-29 20:42
+============================================================
+
+Best Model per Asset:
+   asset          model   IC_mean    IC_std  RMSE_mean  hit_rate_mean  n_folds  time_seconds
+0   BOND           lstm -0.058169  0.392268   0.104965       0.518939       22     56.372771
+1   GOLD           lstm  0.130810  0.431076   0.177266       0.700980       17     45.621183
+10   SPX  Ensemble_Top5  0.149023       NaN   0.224461       0.850754       41      0.000000

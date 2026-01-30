@@ -78,6 +78,76 @@ class SHAPAnalyzer:
                 logger.warning(f"Failed to process pipeline for SHAP: {e}")
                 return self._fallback_importance(model, X)
 
+        # Handle EnsembleModel (Optimization)
+        # Check if model has 'estimators' attribute (duck typing for EnsembleModel)
+        if hasattr(model, 'estimators') and hasattr(model, 'weights') and model_type == 'ensemble':
+            logger.info(f"Detected EnsembleModel with {len(model.estimators)} estimators. Using optimized component-wise SHAP.")
+            try:
+
+                shap_values_list = []
+                feature_names_list = []
+                weights = model.weights if model.weights is not None else [1.0 / len(model.estimators)] * len(model.estimators)
+                
+                for i, estimator in enumerate(model.estimators):
+                    logger.info(f"Computing SHAP for ensemble constituent {i+1}/{len(model.estimators)} ({type(estimator).__name__})...")
+                    
+                    # Determine constituent model type
+                    # Look inside pipeline if needed
+                    check_est = estimator
+                    if isinstance(estimator, Pipeline):
+                        # Use the final estimator for type checking
+                        if len(estimator.steps) > 0:
+                            check_est = estimator.steps[-1][1]
+                    
+                    est_str = str(type(check_est)).lower()
+                    constituent_type = 'linear' # Default safe fallback
+                    
+                    if any(t in est_str for t in ['forest', 'boost', 'gbm', 'tree']):
+                         constituent_type = 'tree'
+                    elif any(t in est_str for t in ['neural', 'mlp', 'lstm', 'torch', 'keras']):
+                         constituent_type = 'neural'
+                    
+                    # Recursive call for constituent
+                    sub_analyzer = SHAPAnalyzer(n_top_features=self.n_top_features)
+                    # Note: compute_shap_values modifies sub_analyzer.feature_names
+                    sub_shap = sub_analyzer.compute_shap_values(estimator, X, model_type=constituent_type)
+                    
+                    shap_values_list.append(sub_shap)
+                    feature_names_list.append(sub_analyzer.feature_names)
+                
+                # Validation: Ensure all constituents produced compatible SHAP values
+                if not shap_values_list:
+                    raise ValueError("No SHAP values computed for ensemble")
+                
+                # Check shapes
+                base_shape = shap_values_list[0].shape
+                base_features = feature_names_list[0]
+                
+                for i, (sv, fn) in enumerate(zip(shap_values_list[1:], feature_names_list[1:])):
+                    if sv.shape != base_shape:
+                        logger.warning(f"Shape mismatch in ensemble SHAP: Model 0 {base_shape} vs Model {i+1} {sv.shape}. This implies different feature selection.")
+                        # If shapes differ, we cannot average simply. 
+                        # We would need to align by feature name.
+                        # For now, let's assume they match (as they should if using same pipeline on same data).
+                        pass
+                        
+                # Update self.feature_names to match the transformed features
+                self.feature_names = base_features
+                
+                # Weighted average
+                logger.info("Aggregating SHAP values from ensemble constituents...")
+                weighted_shap = np.zeros_like(shap_values_list[0])
+                for sv, w in zip(shap_values_list, weights):
+                    weighted_shap += sv * w
+                
+                self.shap_values = weighted_shap
+                    
+                return self.shap_values
+                
+            except Exception as e:
+                logger.warning(f"Optimized Ensemble SHAP failed: {e}. Falling back to KernelExplainer.")
+                # Fall through to default logic
+
         if isinstance(X, pd.DataFrame):
             self.feature_names = X.columns.tolist()
             X_clean = X.fillna(0)
@@ -163,7 +233,7 @@ class SHAPAnalyzer:
         
         except Exception as e:
             logger.warning(f"SHAP computation failed: {e}")
-            return self._fallback_importance(model, X)
+            return self._fallback_importance(model, X_clean if 'X_clean' in locals() else X)
     
     def _fallback_importance(self, model: Any, X: pd.DataFrame) -> np.ndarray:
         """
@@ -176,9 +246,12 @@ class SHAPAnalyzer:
         Returns:
             Importance array
         """
-        self.feature_names = X.columns.tolist()
-        
-        if hasattr(model, 'get_feature_importance'):
+        if isinstance(X, pd.DataFrame):
+            self.feature_names = X.columns.tolist()
+            n_features = len(X.columns)
+        else:
+            n_features = X.shape[1]
+            self.feature_names = [f"feature_{i}" for i in range(n_features)]
             importance = model.get_feature_importance()
             # Convert to SHAP-like format (repeat for each sample)
             return np.tile(importance.values, (len(X), 1))

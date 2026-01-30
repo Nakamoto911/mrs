@@ -1,0 +1,12 @@
+ALFRED REAL-TIME VALIDATION REPORT
+==================================
+Asset: SPX
+Model: mlp
+Validation Period: 2000-2024
+
+Performance Metrics:
+Revised IC:  -0.0385
+Real-Time IC: 0.0158
+Revision Risk: 141.12%
+
+Verdict: REJECT
