@@ -4,6 +4,15 @@ Evaluation Module
 Cross-validation, metrics, and SHAP analysis.
 """
 
+from .inference import (
+    InferenceResult,
+    compute_ic_with_inference,
+    compute_newey_west_se,
+    compute_hansen_hodrick_se,
+    block_bootstrap_ic,
+    compute_effective_sample_size
+)
+
 from .cross_validation import (
     TimeSeriesCV,
     CVFold,
@@ -45,5 +54,11 @@ __all__ = [
     'compute_all_metrics',
     'check_deployment_criteria',
     'SHAPAnalyzer',
-    'compute_shap_for_model'
+    'compute_shap_for_model',
+    'InferenceResult',
+    'compute_ic_with_inference',
+    'compute_newey_west_se',
+    'compute_hansen_hodrick_se',
+    'block_bootstrap_ic',
+    'compute_effective_sample_size'
 ]

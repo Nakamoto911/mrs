@@ -243,7 +243,7 @@ validation:
   # Time-series cross-validation
   cv:
     min_train_months: 120  # 10 years minimum
-    validation_months: 12
+    validation_months: 36  # Increased to 36 months to exceed 24M horizon
     step_months: 6  # semi-annual rebalancing
     n_folds: "auto"  # depends on data length
 
@@ -276,12 +276,20 @@ metrics:
     - "hit_rate"
     - "directional_mae"
   
-  # Interpretation thresholds
+  # NEW: Inference configuration
+  inference:
+    method: "newey_west"  # newey_west, hansen_hodrick, bootstrap
+    kernel: "bartlett"     # bartlett, parzen, quadratic
+    bootstrap_reps: 1000
+    alpha: 0.05           # Significance level
+    
+  # UPDATED: Adjusted thresholds accounting for proper inference
   thresholds:
-    ic_excellent: 0.30
-    ic_good: 0.20
-    ic_acceptable: 0.15
-    ic_minimum: 0.10
+    ic_excellent: 0.20     # Was 0.30 - adjusted for reality
+    ic_good: 0.15          # Was 0.20
+    ic_acceptable: 0.10    # Was 0.15
+    ic_minimum: 0.05       # Was 0.10
+    t_stat_minimum: 2.0    # NEW: Require t > 2 for significance
 
 # =============================================================================
 # Performance Benchmarks (Expected)

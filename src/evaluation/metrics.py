@@ -11,6 +11,7 @@ import pandas as pd
 from typing import Dict, Optional, Tuple
 from scipy.stats import spearmanr, pearsonr
 import logging
+from .inference import compute_ic_with_inference, InferenceResult
 
 logger = logging.getLogger(__name__)
 
@@ -207,19 +208,51 @@ def compute_feature_stability(shap_revised: pd.Series, shap_realtime: pd.Series)
     return corr
 
 
-def compute_all_metrics(y_true: pd.Series, y_pred: pd.Series) -> Dict[str, float]:
+def compute_ic_adjusted(
+    y_true: pd.Series, 
+    y_pred: pd.Series, 
+    horizon: int = 24
+) -> Dict[str, float]:
     """
-    Compute all evaluation metrics.
+    Compute IC with Newey-West adjusted inference.
+    
+    Returns dictionary with all inference statistics for reporting.
+    """
+    result = compute_ic_with_inference(y_true, y_pred, horizon=horizon)
+    
+    return {
+        'IC': result.estimate,
+        'IC_se_raw': result.se_raw,
+        'IC_se_adjusted': result.se_nw,
+        'IC_t_stat': result.t_stat_nw,
+        'IC_p_value': result.p_value_nw,
+        'IC_ci_lower': result.ci_lower,
+        'IC_ci_upper': result.ci_upper,
+        'IC_effective_n': result.effective_n
+    }
+
+
+def compute_all_metrics(
+    y_true: pd.Series, 
+    y_pred: pd.Series,
+    horizon: int = 24
+) -> Dict[str, float]:
+    """
+    Compute all evaluation metrics with proper inference.
     
     Args:
         y_true: Actual values
         y_pred: Predicted values
+        horizon: Forecast horizon for overlap adjustment
         
     Returns:
-        Dictionary of metrics
+        Dictionary of metrics with inference statistics
     """
+    # Get adjusted IC metrics
+    ic_metrics = compute_ic_adjusted(y_true, y_pred, horizon)
+    
     return {
-        'IC': compute_ic(y_true, y_pred),
+        **ic_metrics,  # IC with inference
         'RMSE': compute_rmse(y_true, y_pred),
         'MAE': compute_mae(y_true, y_pred),
         'R2_OOS': compute_r2_oos(y_true, y_pred),

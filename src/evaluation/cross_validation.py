@@ -178,7 +178,7 @@ class CrossValidator:
                 predictions = fold_model.predict(X_val)
                 
                 # Compute metrics
-                metrics = self._compute_metrics(y_val, predictions, target)
+                metrics = self._compute_metrics(y_val, predictions, target, horizon=24) # Defaulting to 24, should ideally come from config
                 metrics['fold_id'] = fold.fold_id
                 fold_metrics.append(metrics)
                 
@@ -235,9 +235,9 @@ class CrossValidator:
             return model
     
     def _compute_metrics(self, y_true: pd.Series, y_pred: pd.Series,
-                        target: str) -> Dict[str, float]:
-        """Compute evaluation metrics."""
-        from scipy.stats import spearmanr
+                        target: str, horizon: int = 24) -> Dict[str, float]:
+        """Compute evaluation metrics with overlap adjustment."""
+        from .inference import compute_ic_with_inference
         
         # Remove NaN
         mask = ~(y_true.isna() | y_pred.isna())
@@ -247,13 +247,14 @@ class CrossValidator:
         if len(y_true_clean) < 2:
             return {'IC': np.nan, 'RMSE': np.nan, 'MAE': np.nan, 'hit_rate': np.nan}
         
-        metrics = {}
+        # Compute adjusted IC
+        inference = compute_ic_with_inference(y_true_clean, y_pred_clean, horizon=horizon)
         
-        if len(np.unique(y_true_clean)) > 1 and len(np.unique(y_pred_clean)) > 1:
-            ic, _ = spearmanr(y_true_clean, y_pred_clean)
-        else:
-            ic = 0.0  # Constant input results in zero correlation
-        metrics['IC'] = ic
+        metrics = {}
+        metrics['IC'] = inference.estimate
+        metrics['IC_t_stat'] = inference.t_stat_nw
+        metrics['IC_p_value'] = inference.p_value_nw
+        metrics['IC_significant'] = inference.p_value_nw < 0.05
         
         # RMSE
         rmse = np.sqrt(np.mean((y_true_clean - y_pred_clean) ** 2))

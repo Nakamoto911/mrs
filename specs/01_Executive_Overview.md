@@ -85,9 +85,9 @@ For 5-year horizons with semi-annual rebalancing: 12M too short for structural t
 
 | Asset | IC (Revised) | IC (Real-Time) | Revision Risk | Deployment Criteria |
 |---|---|---|---|---|
-| US Equities | 0.20–0.28 | 0.15–0.22 | 15–25% | IC > 0.15, Risk < 30% |
-| US Bonds | 0.28–0.35 | 0.24–0.30 | 10–18% | IC > 0.15, Risk < 30% |
-| Gold | 0.12–0.20 | 0.10–0.16 | 15–22% | IC > 0.15, Risk < 30% |
+| US Equities | 0.18–0.25 | 0.12–0.18 | 15–25% | IC > 0.10, Risk < 30% |
+| US Bonds | 0.22–0.30 | 0.18–0.25 | 10–18% | IC > 0.15, Risk < 30% |
+| Gold | 0.10–0.18 | 0.08–0.14 | 15–22% | IC > 0.05, Risk < 30% |
 
 **Notes:** IC (Information Coefficient) > 0.15 indicates economically significant predictive power. Bonds achieve higher ICs due to lower noise in interest rate data. Market-based features (rates, spreads, VIX) have lower revision risk than real activity (GDP, employment).
 

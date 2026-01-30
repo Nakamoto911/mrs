@@ -30,16 +30,15 @@ class MacroRatioGenerator:
     DEFAULT_RATIOS = {
         'liquidity': [
             # (numerator, denominator, name, is_log_ratio)
-            ('M2SL', 'GDP', 'M2_GDP_Ratio', True),
-            ('M2SL', 'PI', 'M2_Personal_Income', True),
-            ('BOGMBASE', 'GDP', 'Reserves_GDP', True),
-            ('TOTRESNS', 'GDP', 'TotalReserves_GDP', True),
+            ('M2SL', 'INDPRO', 'M2_GDP_Ratio', True),
+            ('M2SL', 'RPI', 'M2_Personal_Income', True),
+            ('BOGMBASE', 'INDPRO', 'Reserves_GDP', True),
+            ('TOTRESNS', 'INDPRO', 'TotalReserves_GDP', True),
         ],
         'leverage': [
-            ('TCMDO', 'GDP', 'TotalDebt_GDP', True),
-            ('BUSLOANS', 'GDP', 'BusinessLoans_GDP', True),
-            ('CONSUMER', 'DSPIC96', 'ConsumerDebt_DPI', True),
-            ('TOTALSL', 'DSPIC96', 'TotalConsumerCredit_DPI', True),
+            ('BUSLOANS', 'INDPRO', 'BusinessLoans_GDP', True),
+            ('CONSUMER', 'RPI', 'ConsumerDebt_DPI', True),
+            ('TOTALSL', 'RPI', 'TotalConsumerCredit_DPI', True),
         ],
         'real_rates': [
             # These are level differences, not log ratios

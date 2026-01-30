@@ -1,0 +1,11 @@
+{
+    "models": [
+        "lightgbm",
+        "xgboost",
+        "random_forest",
+        "lstm",
+        "ridge"
+    ],
+    "weights": "equal",
+    "timestamp": "2026-01-30T09:29:18.096636"
+}

@@ -45,6 +45,7 @@ from evaluation.ensemble import EnsembleEvaluator
 from sklearn.pipeline import Pipeline
 from feature_engineering.cointegration import CointegrationAnalyzer
 from feature_engineering.hierarchical_clustering import HierarchicalSelector
+from models.ensemble import EnsembleModel
 
 
 # Configure logging
@@ -315,10 +316,15 @@ class ModelTournament:
             self.prepare_targets()
         
         # Setup cross-validation
+        cv_config = self.config.get('validation', {}).get('cv', {})
+        logger.info(f"Loaded CV Config: {cv_config}")
+        val_months = cv_config.get('validation_months', 36)
+        logger.info(f"Initializing CV with validation_months={val_months}")
+        
         cv = TimeSeriesCV(
-            min_train_months=120,
-            validation_months=12,
-            step_months=6
+            min_train_months=cv_config.get('min_train_months', 120),
+            validation_months=cv_config.get('validation_months', 36),
+            step_months=cv_config.get('step_months', 6)
         )
         validator = CrossValidator(cv)
         
@@ -393,7 +399,12 @@ class ModelTournament:
                         target='return'
                     )
                     elapsed = time.time() - start
-                    logger.info(f"    IC: {result.metrics.get('IC_mean', np.nan):.3f} ± {result.metrics.get('IC_std', np.nan):.3f}")
+                    ic = result.metrics.get('IC_mean', np.nan)
+                    t_stat = result.metrics.get('IC_t_stat_mean', np.nan)
+                    p_val = result.metrics.get('IC_p_value_mean', np.nan)
+                    sig = '*' if p_val < 0.05 else ''
+                    
+                    logger.info(f"    IC: {ic:.3f} (t={t_stat:.2f}, p={p_val:.3f}{sig})")
                     
                     # Store results
                     results.append({
@@ -401,6 +412,9 @@ class ModelTournament:
                         'model': model_name,
                         'IC_mean': result.metrics.get('IC_mean', np.nan),
                         'IC_std': result.metrics.get('IC_std', np.nan),
+                        'IC_t_stat': result.metrics.get('IC_t_stat_mean', np.nan),
+                        'IC_p_value': result.metrics.get('IC_p_value_mean', np.nan),
+                        'IC_significant': result.metrics.get('IC_significant_mean', 0) > 0.5,
                         'RMSE_mean': result.metrics.get('RMSE_mean', np.nan),
                         'hit_rate_mean': result.metrics.get('hit_rate_mean', np.nan),
                         'n_folds': result.n_folds,
@@ -421,9 +435,11 @@ class ModelTournament:
                     # Save model (save the full pipeline)
                     # We must fit the pipeline on the full dataset before saving
                     logger.info(f"    Refitting {model_name} on full history for persistence...")
+                    pipeline.fit(X, y)
+                    
+                    # Save model (using .joblib to avoid permission issues with .pkl)
+                    model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
                     try:
-                        pipeline.fit(X, y)
-                        model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
                         joblib.dump(pipeline, model_path)
                     except Exception as e:
                         logger.error(f"    Failed to save model {model_name}: {e}")
@@ -478,11 +494,44 @@ class ModelTournament:
                         ensemble_pred_path = self.experiments_dir / 'predictions' / f'{asset}_{ensemble_name}_preds.csv'
                         ensemble_df.to_csv(ensemble_pred_path)
                         
+                        # Create and save EnsembleModel instance for SHAP
+                        try:
+                            # Load actual fitted pipeline objects
+                            fitted_models = []
+                            ensemble_model_names = []
+                            for m in constituent_names:
+                                model_path = self.experiments_dir / 'models' / f'{asset}_{m}.joblib'
+                                if model_path.exists():
+                                    try:
+                                        # Load pipeline
+                                        pipeline = joblib.load(model_path)
+                                        fitted_models.append(pipeline)
+                                        ensemble_model_names.append(m)
+                                    except Exception as e:
+                                        logger.warning(f"Failed to load model {m} for ensemble construction: {e}")
+                            
+                            if fitted_models:
+                                logger.info(f"    Constructing EnsembleModel object from {len(fitted_models)} models...")
+                                ensemble_model = EnsembleModel(estimators=fitted_models)
+                                
+                                # Save ensemble model
+                                ensemble_path = self.experiments_dir / 'models' / f'{asset}_{ensemble_name}.joblib'
+                                joblib.dump(ensemble_model, ensemble_path)
+                                logger.info(f"    Saved EnsembleModel to {ensemble_path}")
+                            else:
+                                logger.warning("No valid models found to construct EnsembleModel")
+                                
+                        except Exception as e:
+                            logger.error(f"Failed to save EnsembleModel: {e}")
+                        
                         # 7. Register Result
                         results.append({
                             'asset': asset,
                             'model': ensemble_name,
                             'IC_mean': metrics.get('IC_mean', np.nan),
+                            'IC_t_stat': metrics.get('IC_t_stat', np.nan),
+                            'IC_p_value': metrics.get('IC_p_value', np.nan),
+                            'IC_significant': metrics.get('IC_significant', False),
                             'RMSE_mean': metrics.get('RMSE_mean', np.nan),
                             'hit_rate_mean': metrics.get('hit_rate_mean', np.nan),
                             'n_folds': top_models[0]['n_folds'],
@@ -570,7 +619,7 @@ class ModelTournament:
             model_name = row['model']
             
             try:
-                model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.pkl'
+                model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
                 
                 # Use a defensive check for existence and readability
                 try:

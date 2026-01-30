@@ -66,8 +66,23 @@ def load_tournament_results():
         })
         if 'RMSE_mean' in df.columns:
             df = df.rename(columns={'RMSE_mean': 'RMSE'})
+        
+        # New columns for inference
+        if 'IC_t_stat' in df.columns:
+            df['t-stat'] = df['IC_t_stat']
+        if 'IC_p_value' in df.columns:
+            df['p-value'] = df['IC_p_value']
+            
         return df
     return pd.DataFrame()
+
+
+def format_ic_with_significance(row):
+    """Format IC with significance stars."""
+    ic = row['IC_mean']
+    p = row.get('p-value', 1.0)
+    sig = '***' if p < 0.01 else '**' if p < 0.05 else '*' if p < 0.10 else ''
+    return f"{ic:.3f}{sig}"
 
 
 def load_ensemble_manifest(asset_code):
@@ -301,11 +316,16 @@ def show_model_comparison(model_results):
         return [''] * len(row)
 
     st.dataframe(
-        filtered.style.format({
+        filtered.assign(
+            IC_formatted=filtered.apply(format_ic_with_significance, axis=1)
+        ).style.format({
+            'IC_formatted': '{}',
             'IC_mean': '{:.3f}',
             'IC_std': '{:.3f}',
             'RMSE': '{:.3f}',
-            'Hit_Rate': '{:.1%}'
+            'Hit_Rate': '{:.1%}',
+            't-stat': '{:.2f}',
+            'p-value': '{:.4f}'
         }).background_gradient(subset=['IC_mean'], cmap='Greens').apply(highlight_ensemble, axis=1),
         width='stretch',
         hide_index=True

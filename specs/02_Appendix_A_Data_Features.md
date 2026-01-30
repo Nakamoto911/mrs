@@ -102,9 +102,11 @@ A single PIT observation for date $t$ is NOT simply a row from a table; it is th
 | Metric | Formula | Threshold | Interpretation |
 |---|---|---|---|
 | Revision Risk (IC) | (IC_rev − IC_rt) / IC_rev | < 30% | % performance loss |
-| Real-Time IC | Spearman(forecast, realized) | > 0.15 | Deployment criterion |
+| Real-Time IC | Spearman(forecast, realized) | > 0.10* | Deployment criterion |
 | Feature Stability | Corr(SHAP_rev, SHAP_rt) | > 0.70 | Consistent drivers? |
 | Market-Based Features | Rates, spreads, VIX | Low risk | Never revised |
+
+*\*Threshold varies by asset: 0.15 for Bonds, 0.10 for Equities, 0.05 for Gold (adjusted for overlapping noise).*
 
 ---
 

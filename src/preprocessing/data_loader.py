@@ -205,7 +205,7 @@ class AssetPriceLoader:
             'name': 'S&P 500',
             'modern_ticker': 'SPY',
             'modern_start': '1993-01-01',
-            'fred_series': 'SP500',
+            'fred_series': 'S&P 500',
             'dividend_series': 'SPDYLD',
         },
         'BOND': {

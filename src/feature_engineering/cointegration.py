@@ -51,15 +51,14 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
     # Theory-driven pairs for cointegration testing
     DEFAULT_PAIRS = [
         # (series1, series2, name, economic_theory)
-        ('GDPC1', 'M2SL', 'gdp_m2', 'quantity_theory'),
+        ('INDPRO', 'M2SL', 'gdp_m2', 'quantity_theory'),
         ('RPI', 'M2SL', 'income_m2', 'quantity_theory'),
         ('GS10', 'CPIAUCSL', 'yields_inflation', 'fisher_hypothesis'),
         ('GS5', 'CPIAUCSL', 'yields5_inflation', 'fisher_hypothesis'),
         ('INDPRO', 'PAYEMS', 'output_employment', 'okun_law'),
-        ('GDPC1', 'PAYEMS', 'gdp_employment', 'okun_law'),
-        ('HOUST', 'MORTGAGE30US', 'housing_rates', 'housing_market'),
-        ('PERMIT', 'MORTGAGE30US', 'permits_rates', 'housing_market'),
-        ('SP500', 'GDPC1', 'stocks_gdp', 'equity_macro'),
+        ('HOUST', 'GS10', 'housing_rates', 'housing_market'),
+        ('PERMIT', 'GS10', 'permits_rates', 'housing_market'),
+        ('S&P 500', 'INDPRO', 'stocks_gdp', 'equity_macro'),
         ('DPCERA3M086SBEA', 'RPI', 'consumption_income', 'permanent_income'),
     ]
     

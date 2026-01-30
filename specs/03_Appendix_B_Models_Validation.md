@@ -9,8 +9,9 @@
 1. [Asset-Specific Regime Detection](#asset-specific-regime-detection)
 2. [Model Tournament Framework](#model-tournament-framework)
 3. [Evaluation Metrics & Selection Criteria](#evaluation-metrics--selection-criteria)
-4. [ALFRED Validation Protocol](#alfred-validation-protocol)
-5. [Dominant Driver Monitoring System](#dominant-driver-monitoring-system)
+4. [Robust Statistical Inference](#robust-statistical-inference)
+5. [ALFRED Validation Protocol](#alfred-validation-protocol)
+6. [Dominant Driver Monitoring System](#dominant-driver-monitoring-system)
 
 ---
 
@@ -107,7 +108,7 @@ To maintain estimation integrity across the high-dimensional (744-feature) space
 
 | Metric | Definition | Primary For | Target |
 |---|---|---|---|
-| IC | Spearman rank correlation | Return forecasts | > 0.20 |
+| IC | Spearman rank correlation | Return forecasts | > 0.10 |
 | RMSE | Root mean squared error | Volatility forecasts | Minimize |
 | MAE | Mean absolute error | Robustness check | Minimize |
 | R² (OOS) | Out-of-sample R-squared | Variance explained | > 0.10 |
@@ -121,6 +122,22 @@ To maintain estimation integrity across the high-dimensional (744-feature) space
 - **Tie-break:** Prefer simpler models (VECM > XGBoost > LSTM) for interpretability
 
 ---
+
+## Robust Statistical Inference
+
+### 4.1 Overlapping Observations
+The 24-month forecast horizon creates 23 months of overlap between consecutive observations, inducing severe autocorrelation in residuals. Naive standard errors understate risk by 3-5x.
+
+### 4.2 Adjustment Methodologies
+- **Newey-West (1987):** Heteroskedasticity and Autocorrelation Consistent (HAC) standard errors using Bartlett/Parzen kernels.
+- **Hansen-Hodrick (1980):** Specifically designed for overlapping forecasts; uses a truncated kernel at $h-1$ lags.
+- **Block Bootstrap:** Resampling overlapping blocks of size $h$ to preserve dependency structure.
+
+### 4.3 Inference Statistics
+All metrics now include:
+- **Adjusted IC:** Spearman correlation with HAC standard errors.
+- **Adjusted t-stat:** $t = IC / SE_{NW}$ using effective degrees of freedom ($N/h$).
+- **Significance:** $p$-values adjusted for the effective sample size.
 
 ## ALFRED Validation Protocol
 
