@@ -123,6 +123,7 @@ class CVResult:
     fold_metrics: List[Dict[str, float]]
     feature_importance: Optional[pd.Series]
     predictions: Optional[pd.DataFrame]
+    fold_metadata: Optional[List[Dict[str, Any]]] = None
 
 
 class CrossValidator:
@@ -159,6 +160,7 @@ class CrossValidator:
         fold_metrics = []
         all_predictions = []
         all_importances = []
+        all_step_metadata = []
         
         for fold in self.cv.split(X):
             # Get data for fold
@@ -189,6 +191,19 @@ class CrossValidator:
                     'fold': fold.fold_id
                 }, index=y_val.index)
                 all_predictions.append(pred_df)
+                
+                # Capture metadata from steps (e.g. cointegration validation)
+                fold_step_metadata = {}
+                if hasattr(fold_model, 'named_steps'):
+                    for step_name, step_obj in fold_model.named_steps.items():
+                        # Capture cointegration results
+                        if step_name == 'cointegration' and hasattr(step_obj, 'validation_results'):
+                            fold_step_metadata['cointegration_results'] = step_obj.validation_results
+                
+                if fold_step_metadata:
+                    if not hasattr(self, 'fold_metadata'): self.fold_metadata = []
+                    fold_step_metadata['fold_id'] = fold.fold_id
+                    all_step_metadata.append(fold_step_metadata)
                 
                 # Feature importance
                 if hasattr(fold_model, 'get_feature_importance'):
@@ -222,7 +237,8 @@ class CrossValidator:
             metrics=agg_metrics,
             fold_metrics=fold_metrics,
             feature_importance=agg_importance,
-            predictions=predictions_df
+            predictions=predictions_df,
+            fold_metadata=all_step_metadata if all_step_metadata else None
         )
     
     def _clone_model(self, model: Any) -> Any:

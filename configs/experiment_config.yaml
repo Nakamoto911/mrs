@@ -109,14 +109,30 @@ features:
 
   # Cointegration pairs (theory-driven)
   cointegration:
+    # Enable/disable validation
+    validate: true
+    significance_level: 0.05
+    min_observations: 120
+    
+    # Stability requirements
+    stability_threshold: 0.70  # 70% of rolling windows must show cointegration
+    
+    # Theory override for pairs with very strong priors
+    allow_theory_override: true
+    theory_override_pairs:
+      - "consumption_income"
+    
+    # Pairs to test (theory column is informational)
     pairs:
-      - ["GDPC1", "M2SL", "quantity_theory"]
-      - ["GS10", "CPIAUCSL", "fisher_hypothesis"]
-      - ["INDPRO", "PAYEMS", "okun_law"]
-      - ["HOUST", "MORTGAGE30US", "housing_rates"]
-      - ["SP500", "SP500_DIV", "gordon_growth"]
-    johansen_spec: "ci"  # restricted constant
-    significance: 0.05
+      - ["INDPRO", "M2SL", "quantity_theory", "M2 velocity stability"]
+      - ["GS10", "CPIAUCSL", "fisher_hypothesis", "Real rate stationarity"]
+      - ["INDPRO", "PAYEMS", "okun_law", "Output-employment linkage"]
+      - ["HOUST", "GS10", "housing_rates", "Housing demand elasticity"]
+      - ["S&P 500", "S&P div yield", "gordon_growth", "Present value relation"]
+      - ["DPCERA3M086SBEA", "RPI", "consumption_income", "Permanent income hypothesis"]
+    
+    # Maximum lag for ECT generation
+    johansen_spec: "ci"
     max_lag: 12
 
   # Momentum windows (months)

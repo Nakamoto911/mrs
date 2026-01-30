@@ -198,7 +198,12 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
             return cluster_features[0]
         
         # Get cluster data
-        cluster_df = df[cluster_features].dropna()
+        # Use only features present in the current dataframe
+        present_features = [f for f in cluster_features if f in df.columns]
+        if not present_features:
+            return cluster_features[0]
+            
+        cluster_df = df[present_features].dropna()
         
         if len(cluster_df) < self.min_observations:
             # Not enough data - return first feature
@@ -328,6 +333,11 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         """
         if hasattr(X, 'columns'):
             self.feature_names_in_ = X.columns.tolist()
+            
+        # Reset state for fresh fit
+        self.clusters = None
+        self.representatives = None
+        self.cluster_labels = None
             
         # If y is provided and selection_method is 'univariate_ic' or 'auto',
         # we can use it for representative selection.

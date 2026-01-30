@@ -23,6 +23,12 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from statsmodels.tsa.stattools import coint
 
+from .cointegration_validator import (
+    CointegrationValidator,
+    CointegrationTestResult,
+    CointegrationStatus
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +72,11 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
                  pairs: Optional[List[Tuple]] = None,
                  max_lag: int = 12,
                  significance: float = 0.05,
-                 det_order: int = 0):
+                 det_order: int = 0,
+                 validate: bool = True,
+                 min_observations: int = 120,
+                 stability_threshold: float = 0.70,
+                 allow_theory_override: bool = True):
         """
         Initialize cointegration analyzer.
         
@@ -75,17 +85,31 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
             max_lag: Maximum lag order for Johansen test
             significance: Significance level for tests
             det_order: Deterministic term order (-1: no const/trend, 0: const, 1: const+trend)
+            validate: Whether to statistically validate pairs before use
+            min_observations: Minimum observations for validation
+            stability_threshold: Threshold for rolling stability
+            allow_theory_override: Whether to allow theory override for strong priors
         """
         self.pairs = pairs or self.DEFAULT_PAIRS
         self.max_lag = max_lag
         self.significance = significance
         self.det_order = det_order
+        self.validate = validate
+        
+        self.validator = CointegrationValidator(
+            significance_level=significance,
+            min_observations=min_observations,
+            stability_threshold=stability_threshold,
+            allow_theory_override=allow_theory_override
+        )
         
         # Store results
         self.results: Dict[str, CointegrationResult] = {}
+        self.validation_results: Dict[str, CointegrationTestResult] = {}
         self.ect_features: Dict[str, pd.Series] = {}
         
         # Scikit-learn parameters
+        self.validated_pairs: List[Tuple] = []
         self.vectors_: Dict[str, np.ndarray] = {}
         self.fitted_ = False
     
@@ -293,7 +317,7 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
 
     def fit(self, X: pd.DataFrame, y: Any = None):
         """
-        Scikit-learn fit method.
+        Scikit-learn fit method. Performs cointegration validation.
         
         Args:
             X: DataFrame with level data
@@ -305,7 +329,33 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
         if hasattr(X, 'columns'):
             self.feature_names_in_ = X.columns.tolist()
             
-        self.analyze_pairs(X)
+        # Reset state for fresh fit
+        self.results = {}
+        self.validation_results = {}
+        self.vectors_ = {}
+        self.ect_features = {}
+            
+        if self.validate:
+            # Run validation tests
+            self.validation_results = self.validator.test_all_pairs(X, self.pairs)
+            
+            # Get validated pairs only
+            self.validated_pairs = self.validator.get_validated_pairs(
+                self.validation_results
+            )
+            
+            logger.debug(
+                f"Cointegration validation: {len(self.validated_pairs)} of "
+                f"{len(self.pairs)} pairs validated"
+            )
+        else:
+            # Legacy behavior: use all pairs
+            self.validated_pairs = [
+                (p[0], p[1], p[2]) for p in self.pairs
+            ]
+            
+        # Analyze the validated pairs (compute vectors)
+        self.analyze_pairs(X, pairs=self.validated_pairs)
         
         # Store vectors for transform
         self.vectors_ = {}

@@ -51,6 +51,10 @@ from evaluation import (
 from evaluation.ensemble import EnsembleEvaluator
 from sklearn.pipeline import Pipeline
 from feature_engineering.cointegration import CointegrationAnalyzer
+from feature_engineering.cointegration_validator import (
+    format_cointegration_report,
+    CointegrationStatus
+)
 from feature_engineering.hierarchical_clustering import HierarchicalSelector
 from models.ensemble import EnsembleModel
 
@@ -187,8 +191,23 @@ class ModelTournament:
         momentum = generate_all_momentum_features(transformed)
         
         # Prepare raw levels for PIT cointegration (rename to avoid collision)
-        coint_vars = list(set([p[0] for p in CointegrationAnalyzer.DEFAULT_PAIRS] + [p[1] for p in CointegrationAnalyzer.DEFAULT_PAIRS]))
-        raw_levels = raw_data[coint_vars].copy()
+        # Fetch from config to ensure we have all vars needed for validation
+        coint_cfg = self.config.get('features', {}).get('cointegration', {})
+        coint_pairs_raw = coint_cfg.get('pairs', CointegrationAnalyzer.DEFAULT_PAIRS)
+        
+        coint_vars = set()
+        for p in coint_pairs_raw:
+            if len(p) >= 2:
+                coint_vars.add(p[0])
+                coint_vars.add(p[1])
+        
+        # Also include defaults just in case
+        for p in CointegrationAnalyzer.DEFAULT_PAIRS:
+            coint_vars.add(p[0])
+            coint_vars.add(p[1])
+            
+        available_coint_vars = [c for c in coint_vars if c in raw_data.columns]
+        raw_levels = raw_data[available_coint_vars].copy()
         raw_levels.columns = [f"{c}_level" for c in raw_levels.columns]
 
         # Combine all features
@@ -366,6 +385,9 @@ class ModelTournament:
             logger.info(f"    Aligned data with {pub_lag} month lag. {len(X)} samples remaining.")
             logger.info(f"    Forwarding {len(X.columns)} features to model layer")
             
+            # Track fold metadata for cointegration report (shared across models)
+            latest_fold_metadata = None
+
             for model_name in models:
                 logger.info(f"  Training {model_name}...")
                 
@@ -386,15 +408,25 @@ class ModelTournament:
                     elif model_type == 'neural':
                         model_instance = create_neural_model(model_name.replace('_', ''), **params)
                     
-                    # Create pairs config with _level suffix to match the features we added
+                    # Create pairs config from experiment_config if possible
+                    coint_cfg = self.config.get('features', {}).get('cointegration', {})
+                    coint_pairs_raw = coint_cfg.get('pairs', CointegrationAnalyzer.DEFAULT_PAIRS)
+                    
                     coint_pairs = []
-                    for p in CointegrationAnalyzer.DEFAULT_PAIRS:
+                    for p in coint_pairs_raw:
                         if len(p) >= 3:
                             # (series1, series2, name, theory)
                              coint_pairs.append((f"{p[0]}_level", f"{p[1]}_level", p[2], p[3] if len(p) > 3 else ''))
 
                     pipeline_steps = [
-                        ('cointegration', CointegrationAnalyzer(pairs=coint_pairs)),
+                        ('cointegration', CointegrationAnalyzer(
+                            pairs=coint_pairs,
+                            validate=coint_cfg.get('validate', True),
+                            significance=coint_cfg.get('significance_level', 0.05),
+                            min_observations=coint_cfg.get('min_observations', 120),
+                            stability_threshold=coint_cfg.get('stability_threshold', 0.70),
+                            allow_theory_override=coint_cfg.get('allow_theory_override', True)
+                        )),
                         ('clustering', HierarchicalSelector(similarity_threshold=0.80)),
                         ('model', model_instance)
                     ]
@@ -485,6 +517,36 @@ class ModelTournament:
                             'IC_mean': np.nan,
                             'error': str(e)
                         })
+                
+                
+                # Capture fold metadata for reporting
+                if hasattr(result, 'fold_metadata') and result.fold_metadata:
+                    latest_fold_metadata = result.fold_metadata
+            
+            # LOG COINTEGRATION VALIDATION REPORT (Once per asset)
+            if latest_fold_metadata:
+                fold0_meta = latest_fold_metadata[0]
+                if 'cointegration_results' in fold0_meta:
+                    report = format_cointegration_report(fold0_meta['cointegration_results'])
+                    logger.info(f"\n{report}")
+                    
+                    # Track stability across folds
+                    pair_counts = {}
+                    total_folds = len(latest_fold_metadata)
+                    
+                    for fold_meta in latest_fold_metadata:
+                        coint_res = fold_meta.get('cointegration_results', {})
+                        for pair_name, r in coint_res.items():
+                            if r.include_in_model:
+                                pair_counts[pair_name] = pair_counts.get(pair_name, 0) + 1
+                    
+                    logger.info("\nCOINTEGRATION STABILITY ACROSS CV FOLDS")
+                    logger.info("-" * 40)
+                    for pair_name, count in pair_counts.items():
+                        stability = count / total_folds
+                        status = "Stable" if stability > 0.8 else "Marginal" if stability > 0.5 else "Unstable"
+                        logger.info(f"{pair_name:<25}: {count}/{total_folds} folds ({stability:.1%}) - {status}")
+                    logger.info("-" * 40)
 
             # --- Ensemble Strategy Execution (Post-Asset Loop) ---
             try:

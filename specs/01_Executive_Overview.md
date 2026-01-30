@@ -14,7 +14,7 @@ This research methodology is organized into four interconnected documents:
   Strategic objectives, core innovations, expected outcomes, and high-level methodology
 
 - **Document 2: Technical Appendix A — Data & Feature Engineering**  
-  FRED-MD data sources, historical extension to 1959, 7-step feature engineering pipeline, hierarchical clustering methodology, ALFRED vintages, two-phase data strategy
+  FRED-MD data sources, historical extension to 1959, 7-step feature engineering pipeline, validated cointegration (Johansen/Engle-Granger), hierarchical clustering, ALFRED vintages.
 
 - **Document 3: Technical Appendix B — Model Framework & Validation**  
   Asset-specific regime detection, model tournament protocol, SHAP analysis, ALFRED validation, revision risk metrics, performance benchmarks
@@ -134,7 +134,7 @@ Streamlit dashboard (5 pages): Experiment config, model comparison, feature impo
 This executive overview provides strategic context. For implementation details, consult:
 
 ### Appendix A: Data & Feature Engineering
-FRED-MD structure, historical extension methodology, 7-step pipeline (preserve stationary levels, FRED-MD transforms, macro ratios, quintile features, cointegration, momentum, cross-asset), hierarchical clustering algorithm with code, ALFRED vintage construction, execution timing
+FRED-MD structure, historical extension methodology, 7-step pipeline (preserve stationary levels, FRED-MD transforms, macro ratios, quintile features, validated cointegration, momentum, cross-asset), hierarchical clustering algorithm, ALFRED vintage construction.
 
 ### Appendix B: Model Framework & Validation
 Statistical Jump Model regime labeling, SHAP dominant driver identification, model tournament specifications (hyperparameters, CV protocol), ALFRED validation workflow, revision risk metrics, performance comparison tables, feature stability analysis

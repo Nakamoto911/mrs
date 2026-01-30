@@ -8,6 +8,7 @@ A quantitative research platform for discovering which macroeconomic variables d
 2. **Hierarchical Clustering**: Eliminates feature substitution instability at 0.80 similarity threshold
 3. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages
 4. **Regime-Level Quintile Features**: Captures regime-dependent dynamics
+5. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals
 
 ## Quick Start
 
@@ -59,7 +60,7 @@ macro_regime_system/
 2. Apply transformations for stationarity
 3. Generate macro ratios
 4. Create quintile features
-5. Cointegration analysis (ECT)
+5. Validated Cointegration analysis (ECT)
 6. Momentum features
 7. **Hierarchical clustering → ~250-300 features**
 

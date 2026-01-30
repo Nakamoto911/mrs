@@ -201,19 +201,34 @@ For all stationary series: Compute 3M, 6M, 12M changes
 
 To eliminate look-ahead bias, features whose calculation depends on the global dataset (Stateful Features) are wrapped in `scikit-learn` transformers and fitted ONLY on the training fold within the cross-validation loop.
 
-### 4.1 Cointegration & Error Correction Terms
+### 4.1 Cointegration & Error Correction Terms (Validated)
 
-Cointegration captures long-run equilibrium relationships. In the PIT pipeline:
-1. **Fit**: The Johansen test is run on the training data to calculate equilibrium vectors ($\beta$).
-2. **Transform**: These $\beta$ vectors are applied to both training and validation data to compute Error Correction Terms (ECT).
-3. **Z-Scores**: ECT Z-scores are computed using **expanding windows** from the start of the series to ensure no future information is used.
+Cointegration captures long-run equilibrium relationships. Historically, macro-finance relies on theoretical priors (e.g., M2 velocity stability), but these relationships frequently break down (e.g., M2-GDP post-1980). The system implements a **Cointegration Validator** to empirically verify relationships within the PIT pipeline:
 
-**Theoretically motivated pairs:**
-- Nominal GDP vs. M2 (quantity theory of money)
-- 10Y Yield vs. CPI (Fisher hypothesis)
-- Industrial Production vs. Employment
-- Housing Starts vs. Mortgage Rates
-- SP500 vs. GDP
+#### 1. Statistical Testing (PIT Fit)
+For each training fold, every theoretical pair undergoes rigorous testing:
+- **Johansen Trace & Max-Eigen Tests**: Determines the number of cointegrating vectors ($r$).
+- **Engle-Granger Two-Step Test**: Residual-based verification of stationarity.
+- **Diagnostics**: Calculation of **Mean Reversion Half-Life** and **ECT Stationarity ($p$-value)**.
+
+#### 2. Inclusion Logic
+A pair is included in the model ONLY if it meets one of these criteria:
+- **Validated**: Passes Johansen or Engle-Granger tests at the 5% level.
+- **Theory Override**: Pairs with extremely strong priors (e.g., `consumption_income`) can be forced if they marginally fail.
+- **Rejected**: Pairs failing all tests (e.g., `quantity_theory` in recent decades) are automatically excluded.
+
+#### 3. ECT Generation (PIT Transform)
+- **Vectors**: $\beta$ vectors estimated from training data are applied to validation data.
+- **Z-Scores**: ECT Z-scores are computed using **strictly expanding windows** to prevent look-ahead bias.
+
+**Theoretically Motivated Pairs:**
+| Name | Series 1 | Series 2 | Economic Theory |
+|---|---|---|---|
+| quantity_theory | GDPC1 | M2SL | M2 velocity stability (Often rejected) |
+| fisher_hypothesis | GS10 | CPIAUCSL | Real rate stationarity |
+| okun_law | INDPRO | PAYEMS | Output-employment linkage (Robust) |
+| housing_rates | HOUST | MORTGAGE30US | Housing demand elasticity |
+| consumption_income | PCEC | DSPIC96 | Permanent Income Hypothesis |
 
 ### 4.2 Hierarchical Clustering & Feature Selection
 
