@@ -69,7 +69,7 @@ Multi-select assets, checkboxes for models, radio buttons for target variable, s
 
 **Page 2: Model Comparison Dashboard**
 
-Dropdown to select asset, performance metrics table (IC, RMSE, R², Hit Rate) with **"Champion" Ensemble Highlighting**, heatmap (models × metrics color-coded), **"🧩 Ensemble Composition" expander** showing contribuing models, time-series of OOS performance, forecast vs. realized scatter plot, export to Excel
+Dropdown to select asset, performance metrics table (IC, Rating, RMSE, R², Hit Rate) with **"Champion" Ensemble Highlighting**, heatmap (models × metrics color-coded by Rating), **"🧩 Ensemble Composition" expander** showing contribuing models, time-series of OOS performance, forecast vs. realized scatter plot, export to Excel
 
 **Page 3: Feature Importance Explorer**
 
@@ -179,7 +179,7 @@ macro_regime_system/
 - [ ] Download 48 ALFRED vintages (2000–2024)
 - [ ] Run validation workflow (~20h, parallelizable to 4–5h)
 - [ ] Compute revision risk metrics
-- [ ] Verify deployment criteria met (IC > 0.15, Risk < 30%)
+- [ ] Verify deployment criteria met (IC > Acceptable threshold, Risk < 30%)
 - [ ] Document feature stability
 
 ### 5.3 Production Deployment (Week 3)

@@ -40,7 +40,14 @@ from feature_engineering import (
     reduce_features_by_clustering
 )
 from models import create_linear_model, create_tree_model, create_neural_model
-from evaluation import TimeSeriesCV, CrossValidator, compute_all_metrics, SHAPAnalyzer
+from evaluation import (
+    TimeSeriesCV,
+    CrossValidator,
+    compute_all_metrics,
+    SHAPAnalyzer,
+    benchmark_model,
+    format_benchmark_report
+)
 from evaluation.ensemble import EnsembleEvaluator
 from sklearn.pipeline import Pipeline
 from feature_engineering.cointegration import CointegrationAnalyzer
@@ -409,6 +416,21 @@ class ModelTournament:
                     
                     logger.info(f"    IC: {ic:.3f} (t={t_stat:.2f}, p={p_val:.3f}{sig})")
                     
+                    # Benchmark the result
+                    benchmark = benchmark_model(
+                        ic=ic,
+                        ic_t_stat=t_stat,
+                        ic_p_value=p_val,
+                        asset=asset,
+                        ic_std=result.metrics.get('IC_std', None)
+                    )
+                    
+                    # Log warnings
+                    if benchmark.warnings:
+                        logger.warning(f"    Benchmark warnings for {asset}/{model_name}:")
+                        for w in benchmark.warnings:
+                            logger.warning(f"      - {w}")
+
                     # Store results
                     results.append({
                         'asset': asset,
@@ -418,6 +440,9 @@ class ModelTournament:
                         'IC_t_stat': result.metrics.get('IC_t_stat_mean', np.nan),
                         'IC_p_value': result.metrics.get('IC_p_value_mean', np.nan),
                         'IC_significant': result.metrics.get('IC_significant_mean', 0) > 0.5,
+                        'IC_rating': benchmark.rating,
+                        'IC_suspicious': benchmark.is_suspicious,
+                        'implied_sharpe': benchmark.implied_sharpe,
                         'RMSE_mean': result.metrics.get('RMSE_mean', np.nan),
                         'hit_rate_mean': result.metrics.get('hit_rate_mean', np.nan),
                         'n_folds': result.n_folds,
@@ -527,6 +552,14 @@ class ModelTournament:
                         except Exception as e:
                             logger.error(f"Failed to save EnsembleModel: {e}")
                         
+                        # Benchmark the ensemble result
+                        ensemble_benchmark = benchmark_model(
+                            ic=metrics.get('IC_mean', np.nan),
+                            ic_t_stat=metrics.get('IC_t_stat', np.nan),
+                            ic_p_value=metrics.get('IC_p_value', 1.0),
+                            asset=asset
+                        )
+
                         # 7. Register Result
                         results.append({
                             'asset': asset,
@@ -535,6 +568,9 @@ class ModelTournament:
                             'IC_t_stat': metrics.get('IC_t_stat', np.nan),
                             'IC_p_value': metrics.get('IC_p_value', np.nan),
                             'IC_significant': metrics.get('IC_significant', False),
+                            'IC_rating': ensemble_benchmark.rating,
+                            'IC_suspicious': ensemble_benchmark.is_suspicious,
+                            'implied_sharpe': ensemble_benchmark.implied_sharpe,
                             'RMSE_mean': metrics.get('RMSE_mean', np.nan),
                             'hit_rate_mean': metrics.get('hit_rate_mean', np.nan),
                             'n_folds': top_models[0]['n_folds'],
@@ -600,8 +636,12 @@ class ModelTournament:
         print("\n" + "=" * 60)
         print("TOURNAMENT RESULTS SUMMARY")
         print("=" * 60)
-        print("\nBest Model per Asset:")
-        print(best_models[['asset', 'model', 'IC_mean', 'hit_rate_mean']].to_string(index=False))
+        print("\nBest Model per Asset (with benchmarking):")
+        display_cols = ['asset', 'model', 'IC_mean', 'IC_rating', 'IC_significant', 'implied_sharpe']
+        # Map boolean to checkmark for cleaner output
+        print_df = best_models[display_cols].copy()
+        print_df['IC_significant'] = print_df['IC_significant'].map({True: '✓', False: '✗'})
+        print(print_df.to_string(index=False))
         
         # Save to report
         report_path = self.experiments_dir / 'reports' / f'tournament_summary_{datetime.now().strftime("%Y%m%d")}.txt'

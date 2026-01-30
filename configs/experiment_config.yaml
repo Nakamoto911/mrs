@@ -283,13 +283,49 @@ metrics:
     bootstrap_reps: 1000
     alpha: 0.05           # Significance level
     
-  # UPDATED: Adjusted thresholds accounting for proper inference
+  # =============================================================================
+  # Performance Thresholds (Calibrated to Academic Literature)
+  # =============================================================================
   thresholds:
-    ic_excellent: 0.20     # Was 0.30 - adjusted for reality
-    ic_good: 0.15          # Was 0.20
-    ic_acceptable: 0.10    # Was 0.15
-    ic_minimum: 0.05       # Was 0.10
-    t_stat_minimum: 2.0    # NEW: Require t > 2 for significance
+    # Asset-specific IC thresholds (out-of-sample, adjusted for overlapping obs)
+    # These reflect REALISTIC expectations, not aspirational targets
+    
+    equities:  # SPX
+      ic_excellent: 0.12      # Top decile of published research
+      ic_good: 0.08           # Economically meaningful
+      ic_acceptable: 0.05     # Statistically detectable
+      ic_minimum: 0.03        # Marginally useful
+      ic_suspicious: 0.20     # Likely data issue or overfitting
+      
+    bonds:  # BOND
+      ic_excellent: 0.18      # Bonds more predictable via term structure
+      ic_good: 0.12
+      ic_acceptable: 0.08
+      ic_minimum: 0.05
+      ic_suspicious: 0.30
+      
+    commodities:  # GOLD
+      ic_excellent: 0.10      # Commodities least predictable
+      ic_good: 0.06
+      ic_acceptable: 0.04
+      ic_minimum: 0.02
+      ic_suspicious: 0.18
+    
+    # Statistical significance requirements
+    inference:
+      t_stat_minimum: 1.96    # 5% significance level
+      p_value_maximum: 0.05
+      effective_n_minimum: 15  # Minimum effective observations
+      
+    # Sanity checks
+    anomaly_detection:
+      max_in_sample_vs_oos_ratio: 2.0  # IS IC / OOS IC < 2
+      max_ic_std_ratio: 3.0            # IC_mean / IC_std > 3 is suspicious
+      
+    # Economic significance
+    economic:
+      min_implied_sharpe: 0.20         # IC * sqrt(12 * turnover_adj)
+      max_turnover_annual: 12          # Trades per year
 
 # =============================================================================
 # Performance Benchmarks (Expected)

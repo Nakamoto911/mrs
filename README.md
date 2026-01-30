@@ -69,13 +69,32 @@ macro_regime_system/
 - **Tree-Based**: XGBoost, LightGBM, Random Forest
 - **Neural**: MLP, LSTM
 
-## Expected Performance
+## Understanding IC Thresholds
 
-| Asset | IC (Revised) | IC (Real-Time) | Deploy Criteria |
-|-------|--------------|----------------|-----------------|
-| SPX   | 0.20-0.28    | 0.15-0.22      | IC > 0.15, Risk < 30% |
-| Bond  | 0.28-0.35    | 0.24-0.30      | IC > 0.15, Risk < 30% |
-| Gold  | 0.12-0.20    | 0.10-0.16      | IC > 0.15, Risk < 30% |
+This system uses literature-calibrated IC thresholds that reflect realistic 
+expectations for macro-timing models at 24-month horizons:
+
+| Asset Class | Excellent | Good | Acceptable | Minimum |
+|-------------|-----------|------|------------|---------|
+| Equities    | > 0.12    | > 0.08 | > 0.05   | > 0.03  |
+| Bonds       | > 0.18    | > 0.12 | > 0.08   | > 0.05  |
+| Commodities | > 0.10    | > 0.06 | > 0.04   | > 0.02  |
+
+**Important**: An IC of 0.30+ would be extraordinary and triggers investigation for 
+data leakage. Most successful quantitative strategies operate with ICs in the 
+0.02-0.10 range at these horizons.
+
+References:
+- Welch & Goyal (2008): "A Comprehensive Look at The Empirical Performance of Equity Premium Prediction"
+- Campbell & Thompson (2008): "Predicting Excess Stock Returns Out of Sample"
+
+## Expected Performance Benchmarks
+
+| Asset | Rating: Excellent | Rating: Good | Rating: Acceptable |
+|-------|-------------------|--------------|--------------------|
+| SPX   | > 0.12            | > 0.08       | > 0.05             |
+| Bond  | > 0.18            | > 0.12       | > 0.08             |
+| Gold  | > 0.10            | > 0.06       | > 0.04             |
 
 ## Dashboard Pages
 

@@ -69,7 +69,7 @@ Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "ac
 - **DISCOVERY** on lagged revised FRED-MD: Find true relationships without measurement noise
 - **VALIDATION** on ALFRED real-time vintages: Test with data actually available to investors
 - Compute Revision Risk (typical IC degradation 15–25%)
-- Deploy only models with IC > 0.15 on real-time data AND Revision Risk < 30%
+- Deploy only models with IC(real-time) exceeding asset-specific "Acceptable" thresholds and Revision Risk < 30%
 
 ### 4. Regime-Level Quintile Features
 
@@ -81,15 +81,15 @@ For 5-year horizons with semi-annual rebalancing: 12M too short for structural t
 
 ---
 
-## Expected Performance Benchmarks
+## Expected Performance Benchmarks (Literature-Calibrated)
 
-| Asset | IC (Revised) | IC (Real-Time) | Revision Risk | Deployment Criteria |
+| Asset Class | Excellent (Top Decile) | Good (Meaningful) | Acceptable (Detectable) | Deployment criteria |
 |---|---|---|---|---|
-| US Equities | 0.18–0.25 | 0.12–0.18 | 15–25% | IC > 0.10, Risk < 30% |
-| US Bonds | 0.22–0.30 | 0.18–0.25 | 10–18% | IC > 0.15, Risk < 30% |
-| Gold | 0.10–0.18 | 0.08–0.14 | 15–22% | IC > 0.05, Risk < 30% |
+| **Equities (SPX)** | IC > 0.12 | IC > 0.08 | IC > 0.05 | IC > 0.05, Risk < 30% |
+| **Bonds (BOND)** | IC > 0.18 | IC > 0.12 | IC > 0.08 | IC > 0.08, Risk < 30% |
+| **Commodities (GOLD)** | IC > 0.10 | IC > 0.06 | IC > 0.04 | IC > 0.04, Risk < 30% |
 
-**Notes:** IC (Information Coefficient) > 0.15 indicates economically significant predictive power. Bonds achieve higher ICs due to lower noise in interest rate data. Market-based features (rates, spreads, VIX) have lower revision risk than real activity (GDP, employment).
+**Notes:** IC (Information Coefficient) measures rank-ordering predictive power. These thresholds are calibrated to empirical benchmarks (Welch & Goyal, 2008; Campbell & Thompson, 2008) for 24-month horizons. Bonds achieve higher ICs due to term structure persistence; Commodities are the most noise-dominated.
 
 ---
 

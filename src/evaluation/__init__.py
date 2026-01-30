@@ -38,6 +38,17 @@ from .shap_analysis import (
     compute_shap_for_model
 )
 
+from .benchmarking import (
+    benchmark_model,
+    BenchmarkResult,
+    get_thresholds_for_asset,
+    compute_implied_sharpe,
+    format_benchmark_report,
+    create_benchmark_table,
+    AssetClass,
+    ASSET_THRESHOLDS
+)
+
 __all__ = [
     'TimeSeriesCV',
     'CVFold',
@@ -60,5 +71,13 @@ __all__ = [
     'compute_newey_west_se',
     'compute_hansen_hodrick_se',
     'block_bootstrap_ic',
-    'compute_effective_sample_size'
+    'compute_effective_sample_size',
+    'benchmark_model',
+    'BenchmarkResult',
+    'get_thresholds_for_asset',
+    'compute_implied_sharpe',
+    'format_benchmark_report',
+    'create_benchmark_table',
+    'AssetClass',
+    'ASSET_THRESHOLDS'
 ]

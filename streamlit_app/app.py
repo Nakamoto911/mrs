@@ -73,6 +73,14 @@ def load_tournament_results():
         if 'IC_p_value' in df.columns:
             df['p-value'] = df['IC_p_value']
             
+        # Add benchmarking columns if they exist
+        if 'IC_rating' in df.columns:
+            df['Rating'] = df['IC_rating']
+        if 'IC_suspicious' in df.columns:
+            df['Suspicious'] = df['IC_suspicious']
+        if 'implied_sharpe' in df.columns:
+            df['Implied_SR'] = df['implied_sharpe']
+            
         return df
     return pd.DataFrame()
 
@@ -295,6 +303,18 @@ def show_dominant_drivers():
     st.plotly_chart(fig, width='stretch')
 
 
+def style_rating(val):
+    """Style IC ratings with colors."""
+    colors = {
+        'excellent': 'background-color: #28a745; color: white',
+        'good': 'background-color: #20c997',
+        'acceptable': 'background-color: #ffc107',
+        'minimum': 'background-color: #fd7e14',
+        'poor': 'background-color: #dc3545; color: white'
+    }
+    return colors.get(str(val).lower(), '')
+
+
 def show_model_comparison(model_results):
     """Show model comparison dashboard."""
     st.header("📈 Model Comparison Dashboard")
@@ -310,10 +330,9 @@ def show_model_comparison(model_results):
     # Performance table
     st.subheader("Performance Metrics")
     
-    def highlight_ensemble(row):
-        if "Ensemble" in str(row.Model):
-            return ['background-color: #E6F3FF'] * len(row)
-        return [''] * len(row)
+    # Add suspicious warning banner
+    if 'Suspicious' in filtered.columns and filtered['Suspicious'].any():
+        st.warning("⚠️ One or more models have suspiciously high IC values. Review for data leakage or look-ahead bias.")
 
     st.dataframe(
         filtered.assign(
@@ -325,8 +344,11 @@ def show_model_comparison(model_results):
             'RMSE': '{:.3f}',
             'Hit_Rate': '{:.1%}',
             't-stat': '{:.2f}',
-            'p-value': '{:.4f}'
-        }).background_gradient(subset=['IC_mean'], cmap='Greens').apply(highlight_ensemble, axis=1),
+            'p-value': '{:.4f}',
+            'Implied_SR': '{:.2f}'
+        }).background_gradient(subset=['IC_mean'], cmap='Greens')
+        .apply(highlight_ensemble, axis=1)
+        .map(style_rating, subset=['Rating'] if 'Rating' in filtered.columns else []),
         width='stretch',
         hide_index=True
     )

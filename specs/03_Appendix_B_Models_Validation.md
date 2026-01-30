@@ -108,12 +108,14 @@ To maintain estimation integrity across the high-dimensional (744-feature) space
 
 | Metric | Definition | Primary For | Target |
 |---|---|---|---|
-| IC | Spearman rank correlation | Return forecasts | > 0.10 |
+| IC | Spearman rank correlation | Return forecasts | > 0.05* |
 | RMSE | Root mean squared error | Volatility forecasts | Minimize |
 | MAE | Mean absolute error | Robustness check | Minimize |
 | R² (OOS) | Out-of-sample R-squared | Variance explained | > 0.10 |
-| Hit Rate | % correct directional forecasts | Regime detection | > 60% |
+| Hit Rate | % correct directional forecasts | Regime detection | > 55%* |
 | Directional MAE | MAE when direction correct | Quality given correct sign | Lower |
+
+*\*Calibrated by asset class (Equities > 0.05, Bonds > 0.08, Commodities > 0.04). See Section 4 for detailed benchmarking.*
 
 ### 3.3 Model Selection Criterion
 
@@ -159,17 +161,19 @@ All metrics now include:
 - **Feature Stability Score** = Correlation(SHAP_revised, SHAP_realtime)
 
 **Deployment Criteria:**
-- IC(realtime) > 0.15
-- Revision Risk < 30%
-- Feature Stability > 0.70
+- **IC(realtime)**: Must exceed asset-specific "Acceptable" threshold (Equities > 0.05, Bonds > 0.08, Gold > 0.04)
+- **Revision Risk**: < 30%
+- **Feature Stability**: > 0.70
 
-### 4.3 Expected Results
+### 4.3 Literature-Calibrated Benchmarking
 
-| Asset | Model | IC_Revised | IC_Realtime | Rev_Risk | Deploy? |
-|---|---|---|---|---|---|
-| S&P 500 | XGBoost | 0.28 | 0.22 | 21% | ✓ |
-| 10Y Bond | Elastic Net | 0.32 | 0.29 | 9% | ✓ |
-| Gold | Ridge | 0.16 | 0.13 | 19% | ✓ |
+The system automatically benchmarks models against academic literature standards (e.g., Welch & Goyal 2008) to provide realistic performance ratings:
+
+| Asset | Rating: Excellent | Rating: Good | Rating: Acceptable | Minimum |
+|---|---|---|---|---|
+| S&P 500 (SPX) | IC > 0.12 | IC > 0.08 | IC > 0.05 | IC > 0.03 |
+| 10Y Bond (BOND) | IC > 0.18 | IC > 0.12 | IC > 0.08 | IC > 0.05 |
+| Gold (GOLD) | IC > 0.10 | IC > 0.06 | IC > 0.04 | IC > 0.02 |
 
 ---
 

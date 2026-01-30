@@ -106,7 +106,7 @@ A single PIT observation for date $t$ is NOT simply a row from a table; it is th
 | Feature Stability | Corr(SHAP_rev, SHAP_rt) | > 0.70 | Consistent drivers? |
 | Market-Based Features | Rates, spreads, VIX | Low risk | Never revised |
 
-*\*Threshold varies by asset: 0.15 for Bonds, 0.10 for Equities, 0.05 for Gold (adjusted for overlapping noise).*
+*\*Threshold varies by asset: Bonds > 0.08, Equities > 0.05, Gold > 0.04 (calibrated to academic benchmarks).*
 
 ---
 
