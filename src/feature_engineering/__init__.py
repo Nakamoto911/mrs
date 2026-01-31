@@ -28,6 +28,8 @@ from .momentum import (
 
 from .hierarchical_clustering import (
     HierarchicalClusterSelector,
+    SelectionMethod,
+    SelectionConfig,
     reduce_features_by_clustering
 )
 
@@ -43,5 +45,7 @@ __all__ = [
     'MomentumFeatureGenerator',
     'generate_all_momentum_features',
     'HierarchicalClusterSelector',
+    'SelectionMethod',
+    'SelectionConfig',
     'reduce_features_by_clustering'
 ]

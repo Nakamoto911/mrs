@@ -12,6 +12,7 @@ from enum import Enum
 import logging
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from statsmodels.tsa.stattools import adfuller, coint
+from .cointegration_priors import CointegrationPriorWeighter, PriorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ class CointegrationTestResult:
     status: CointegrationStatus
     coint_rank: int  # 0, 1, or 2
     include_in_model: bool
+    weight: float = 1.0  # NEW: Bayesian final weight
+    weight_breakdown: Optional[Dict[str, float]] = None  # NEW: Breakdown of weight factors
     
     # ECT characteristics (if cointegrated)
     ect_half_life: Optional[float] = None  # Mean reversion speed
@@ -111,7 +114,7 @@ class CointegrationValidator:
         significance_level: float = 0.05,
         min_observations: int = 120,
         stability_threshold: float = 0.70,
-        allow_theory_override: bool = True
+        prior_config: Optional[Dict] = None
     ):
         """
         Initialize validator.
@@ -119,13 +122,13 @@ class CointegrationValidator:
         Args:
             significance_level: p-value threshold for tests
             min_observations: Minimum sample size for testing
-            stability_threshold: Minimum ratio of windows with cointegration
-            allow_theory_override: Whether to include pairs with strong priors
+            stability_threshold: Minimum ratio of windows where cointegration holds
+            prior_config: Configuration for Bayesian prior weighting.
         """
         self.significance_level = significance_level
         self.min_observations = min_observations
         self.stability_threshold = stability_threshold
-        self.allow_theory_override = allow_theory_override
+        self.prior_weighter = CointegrationPriorWeighter(prior_config or {})
     
     def test_pair(
         self,
@@ -251,6 +254,7 @@ class CointegrationValidator:
         # Determine status
         johansen_passes = trace_stat > trace_cv if not np.isnan(trace_stat) else False
         eg_passes = eg_pvalue < self.significance_level if not np.isnan(eg_pvalue) else False
+        status = CointegrationStatus.VALIDATED if (johansen_passes or eg_passes) else CointegrationStatus.REJECTED
         
         # ECT analysis if cointegrated
         ect_half_life = None
@@ -284,17 +288,19 @@ class CointegrationValidator:
                 warnings.append(f"ECT analysis error: {str(e)}")
         
         # Final status determination
-        if johansen_passes and eg_passes:
-            status = CointegrationStatus.VALIDATED
+        # Prepare weight components
+        weight_result = self.prior_weighter.compute_weight(
+            pair_name=pair_name,
+            johansen_pvalue=0.01 if johansen_passes else 0.5,
+            eg_pvalue=eg_pvalue if not np.isnan(eg_pvalue) else 0.5,
+            series1=df[series1],
+            series2=df[series2]
+        )
+        
+        # Override status and include based on weight
+        if weight_result.include_in_model:
+            status = status if status != CointegrationStatus.REJECTED else CointegrationStatus.THEORY_OVERRIDE
             include = True
-        elif johansen_passes or eg_passes:
-            status = CointegrationStatus.VALIDATED  # One test sufficient
-            include = True
-            warnings.append("Tests disagree; included based on one passing")
-        elif self.allow_theory_override and pair_name in self.THEORY_OVERRIDE_PAIRS:
-            status = CointegrationStatus.THEORY_OVERRIDE
-            include = True
-            warnings.append(f"Included due to strong theoretical prior despite failing tests")
         else:
             status = CointegrationStatus.REJECTED
             include = False
@@ -330,6 +336,8 @@ class CointegrationValidator:
             status=status,
             coint_rank=coint_rank,
             include_in_model=include,
+            weight=weight_result.final_weight,
+            weight_breakdown=weight_result.components_breakdown,
             ect_half_life=ect_half_life,
             ect_stationarity_pvalue=ect_stationarity_pvalue,
             warnings=warnings

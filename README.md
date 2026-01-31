@@ -48,6 +48,10 @@ macro_regime_system/
 │   ├── feature_engineering/      # Feature generation
 │   ├── models/                   # Model implementations
 │   └── evaluation/               # Evaluation & analysis
+├── scripts/                      # Utility and verification scripts
+│   └── verification/             # Scripts to verify pipeline components
+├── tests/                        # Unit and Integration tests
+├── logs/                         # Execution logs
 ├── streamlit_app/                # Interactive dashboard
 ├── experiments/                  # Output storage
 ├── run_tournament.py             # Discovery phase entry point

@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.base import BaseEstimator
+from preprocessing import TimeSeriesScaler, PointInTimeImputer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -111,22 +112,25 @@ class LinearModelWrapper(BaseEstimator):
         if len(self.selected_features_) == 0:
             raise ValueError(f"No valid features remaining after pruning (N={n_samples})")
 
-        # 4. Strict Rolling Imputation (No Look-ahead)
-        # 1. Compute rolling stats (shifted by 1)
-        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
+        X_filtered = X_filtered[self.selected_features_]
+
+        # 4. Point-in-Time Imputation
+        self.imputer_ = PointInTimeImputer(strategy='median')
+        X_imputed = self.imputer_.transform_expanding(X_filtered)
         
-        # 2. Impute with rolling medians, then 0.0 as final fallback
-        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
-        
-        # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
-        self.fill_values_ = X_filtered.median().fillna(0.0)
-        
-        # 5. Scale features
-        X_scaled = self.scaler_.fit_transform(X_imputed)
+        # 5. Point-in-Time Scaling
+        self.scaler_ = TimeSeriesScaler(method='standard')
+        X_scaled = self.scaler_.fit_transform_rolling(X_imputed)
         
         # 6. Fit model
         self.model_ = self.MODELS[self.model_type](**self.kwargs)
-        self.model_.fit(X_scaled, y_sync)
+        
+        # FINAL SAFETY: Align X and y and ensure no NaNs remain
+        final_mask = ~(X_scaled.isna().any(axis=1) | y_sync.isna())
+        if final_mask.sum() < 20:
+            raise ValueError(f"Insufficient valid data after scaling (N={final_mask.sum()})")
+            
+        self.model_.fit(X_scaled[final_mask], y_sync[final_mask])
         
         self.fitted_ = True
         return self
@@ -147,8 +151,8 @@ class LinearModelWrapper(BaseEstimator):
         # Filter to selected features
         X_filtered = X[self.selected_features_]
         
-        # Impute and Scale (handle potential new NaNs in predict data using frozen values)
-        X_imputed = X_filtered.fillna(self.fill_values_)
+        # Impute and Scale (Using frozen state from Fit)
+        X_imputed = self.imputer_.transform(X_filtered)
         X_scaled = self.scaler_.transform(X_imputed)
         
         predictions = self.model_.predict(X_scaled)

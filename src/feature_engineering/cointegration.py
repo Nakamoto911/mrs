@@ -76,7 +76,7 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
                  validate: bool = True,
                  min_observations: int = 120,
                  stability_threshold: float = 0.70,
-                 allow_theory_override: bool = True):
+                 prior_config: Optional[Dict] = None):
         """
         Initialize cointegration analyzer.
         
@@ -100,7 +100,7 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
             significance_level=significance,
             min_observations=min_observations,
             stability_threshold=stability_threshold,
-            allow_theory_override=allow_theory_override
+            prior_config=prior_config
         )
         
         # Store results
@@ -394,21 +394,24 @@ class CointegrationAnalyzer(BaseEstimator, TransformerMixin):
             if series1_name not in X.columns or series2_name not in X.columns:
                 continue
             
+            # Prepare weight
+            weight = 1.0
+            if hasattr(self, 'validation_results') and pair_name in self.validation_results:
+                weight = self.validation_results[pair_name].weight
+            
             # Compute ECT
             ect = self.compute_ect(X[series1_name], X[series2_name], coint_vector, pair_name)
             
-            # Level ECT
-            features[f"ECT_{pair_name}"] = ect
+            # Level ECT (weighted)
+            features[f"ECT_{pair_name}"] = ect * weight
             
-            # Z-score of ECT (Expanding or fixed?)
-            # User spec: "Computes Z-scores using expanding window statistics (to remain safe) or fixed mean/std from train set."
-            # Expanding is safer for look-ahead.
+            # Z-score of ECT (weighted)
             ect_zscore = (ect - ect.expanding().mean()) / ect.expanding().std()
-            features[f"ECT_{pair_name}_zscore"] = ect_zscore
+            features[f"ECT_{pair_name}_zscore"] = ect_zscore * weight
             
-            # Add changes
+            # Add changes (weighted)
             for window in [1, 3, 6]:
-                features[f"ECT_{pair_name}_chg_{window}M"] = ect.diff(window)
+                features[f"ECT_{pair_name}_chg_{window}M"] = ect.diff(window) * weight
         
         # Drop raw level columns to ensure downstream models only see stationary data
         cols_to_drop = [c for c in features.columns if c.endswith('_level')]

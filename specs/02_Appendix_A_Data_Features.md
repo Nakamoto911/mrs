@@ -97,16 +97,16 @@ A single PIT observation for date $t$ is NOT simply a row from a table; it is th
 - Re-run Discovery models with real-time data
 - Compare IC(revised) vs. IC(realtime), compute Revision Risk
 
-### 2.3 Revision Risk Metrics
+### 4.2 Revision Risk Analysis
 
-| Metric | Formula | Threshold | Interpretation |
-|---|---|---|---|
-| Revision Risk (IC) | (IC_rev − IC_rt) / IC_rev | < 30% | % performance loss |
-| Real-Time IC | Spearman(forecast, realized) | > 0.10* | Deployment criterion |
-| Feature Stability | Corr(SHAP_rev, SHAP_rt) | > 0.70 | Consistent drivers? |
-| Market-Based Features | Rates, spreads, VIX | Low risk | Never revised |
+- **Revision Risk (IC)** = (IC_revised − IC_realtime) / IC_revised
+- **Regime-Conditional Revision**: Analyzes risk during NBER recessions vs. expansions to detect cyclical data quality decay.
+- **Feature Stability Score** = Correlation(SHAP_revised, SHAP_realtime)
 
-*\*Threshold varies by asset: Bonds > 0.08, Equities > 0.05, Gold > 0.04 (calibrated to academic benchmarks).*
+**Deployment Criteria:**
+- **IC(realtime)**: Must exceed asset-specific "Acceptable" threshold (Equities > 0.05, Bonds > 0.08, Gold > 0.04)
+- **Revision Risk**: < 30%
+- **Feature Stability**: > 0.70
 
 ---
 
@@ -162,22 +162,14 @@ Automated pipeline: ~600 raw features generated pointwise or using strictly expa
 
 ### Step 3.5: Create Regime-Level Quintile Features
 
-**Problem:** GS10 declining from 5% (Quintile 5) has different implications than from 2% (Quintile 1). Standard change features cannot distinguish these regimes.
-
 - Select ~15–20 key stationary variables (GS10, Fed Funds, spreads, VIX, unemployment)
-- Compute historical quintiles using a **Strict Expanding Window (Recursive)** methodology to eliminate look-ahead bias.
-  - **Algorithm**: For each date $t$, the quintile $Q_t$ is calculated using only data from $0$ to $t-1$.
+- Compute historical quintiles using a **Robust Expanding Rank** methodology:
+  - **Rank-Based**: $Score = (Rank - 1) / (Count - 1)$ using expanding windows.
+  - **Boundary Safety**: Clips final quintiles to $[1, N]$ to handle exact 1.0 scores.
   - **Burn-In**: 60 Months (5 Years) minimum history required.
-  - **Handling Extremes**: New highs are automatically Q5, new lows are automatically Q1.
-  - **Quintiles**:
-    - **Q1**: 0–20th percentile (very low)
-    - **Q2**: 20–40th (low)
-    - **Q3**: 40–60th (neutral)
-    - **Q4**: 60–80th (high)
-    - **Q5**: 80–100th (very high)
-- Create features: One-hot encoding OR continuous z-score within regime
-- **Example**: If GS10=3.5% and this is in the 85th percentile of yields seen *so far*, then GS10_Q5=1.
-- **Result**: ~40–60 quintile features with high integrity (no look-ahead bias)
+  - **Evaluation**: Computers **Monotonicity** (Spearman correlation of quintile means) and Q5-Q1 spread.
+- Create features: One-hot encoding.
+- **Result**: ~40–60 quintile features with high integrity.
 
 ### Step 4: Cointegration Analysis & Error Correction Terms (MOVED)
 *This step is now part of the **State-Dependent Features (PIT Pipeline)**. See Section 4.*
@@ -201,25 +193,23 @@ For all stationary series: Compute 3M, 6M, 12M changes
 
 To eliminate look-ahead bias, features whose calculation depends on the global dataset (Stateful Features) are wrapped in `scikit-learn` transformers and fitted ONLY on the training fold within the cross-validation loop.
 
-### 4.1 Cointegration & Error Correction Terms (Validated)
+### 4.1 Cointegration & Error Correction Terms (Bayesian Weighting)
 
-Cointegration captures long-run equilibrium relationships. Historically, macro-finance relies on theoretical priors (e.g., M2 velocity stability), but these relationships frequently break down (e.g., M2-GDP post-1980). The system implements a **Cointegration Validator** to empirically verify relationships within the PIT pipeline:
+Cointegration captures long-run equilibrium relationships. The system implements a **Bayesian Prior Weighting** scheme to replace binary overrides:
 
-#### 1. Statistical Testing (PIT Fit)
-For each training fold, every theoretical pair undergoes rigorous testing:
-- **Johansen Trace & Max-Eigen Tests**: Determines the number of cointegrating vectors ($r$).
-- **Engle-Granger Two-Step Test**: Residual-based verification of stationarity.
-- **Diagnostics**: Calculation of **Mean Reversion Half-Life** and **ECT Stationarity ($p$-value)**.
+#### 1. Bayesian Weighting
+Weights are computed as: $W = (Prior^{0.3}) \cdot (Evidence^{0.5}) \cdot (Stability^{0.2})$
+- **Prior**: Theoretical strength (e.g., PIH = 0.8, Fisher = 0.6).
+- **Evidence**: Logistic mapping of Johansen/EG p-values.
+- **Stability**: Historical presence of cointegration over rolling slices.
 
-#### 2. Inclusion Logic
-A pair is included in the model ONLY if it meets one of these criteria:
-- **Validated**: Passes Johansen or Engle-Granger tests at the 5% level.
-- **Theory Override**: Pairs with extremely strong priors (e.g., `consumption_income`) can be forced if they marginally fail.
-- **Rejected**: Pairs failing all tests (e.g., `quantity_theory` in recent decades) are automatically excluded.
+#### 2. Weighted Generation
+- ECTs are multiplied by their final weight before being fed into models.
+- Features with weights below **0.3** are automatically zeroed.
 
-#### 3. ECT Generation (PIT Transform)
-- **Vectors**: $\beta$ vectors estimated from training data are applied to validation data.
-- **Z-Scores**: ECT Z-scores are computed using **strictly expanding windows** to prevent look-ahead bias.
+#### 3. ECT Characteristics
+- ECT Z-scores are computed using **strictly expanding windows**.
+- Half-life of mean reversion is monitored to detect "frozen" relationships.
 
 **Theoretically Motivated Pairs:**
 | Name | Series 1 | Series 2 | Economic Theory |
@@ -240,6 +230,18 @@ GDP Growth, IP Growth, Income Growth all measure "economic activity" with correl
 - **Unclear interpretation:** Top 10 features = 3 economic forces × 3 statistical variants each
 - **Random feature selection** across different runs/time periods
 - **Features are SUBSTITUTES not COMPLEMENTS**
+
+### 4.3 Inference Statistics
+All metrics now include:
+- **Adjusted IC**: Spearman correlation with HAC standard errors.
+- **Adjusted t-stat**: $t = IC / SE_{NW}$ using effective degrees of freedom ($N/h$).
+
+## Robustness Suite
+
+To prevent spurious discoveries, all "Champion" models undergo a final robustness battery:
+- **Placebo Tests**: Target shuffling to compute empirical $p$-values.
+- **Economic Significance**: Returns adjusted for realistic 10bps transaction costs and turnover.
+- **Subsample Stability**: Split-half IC check to ensure results aren't driven by single outliers.
 
 ### 4.2 The Solution: Hierarchical Clustering
 

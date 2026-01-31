@@ -49,6 +49,23 @@ from .benchmarking import (
     ASSET_THRESHOLDS
 )
 
+from .holdout import (
+    HoldoutManager,
+    HoldoutSplit,
+    validate_holdout_never_touched
+)
+
+from .multiple_testing import (
+    MultipleTestingCorrector,
+    HypothesisTest,
+    format_mtc_report
+)
+
+from .nested_cv import (
+    NestedCVEnsembleEvaluator,
+    format_nested_cv_report
+)
+
 __all__ = [
     'TimeSeriesCV',
     'CVFold',
@@ -79,5 +96,13 @@ __all__ = [
     'format_benchmark_report',
     'create_benchmark_table',
     'AssetClass',
-    'ASSET_THRESHOLDS'
+    'ASSET_THRESHOLDS',
+    'HoldoutManager',
+    'HoldoutSplit',
+    'validate_holdout_never_touched',
+    'MultipleTestingCorrector',
+    'HypothesisTest',
+    'format_mtc_report',
+    'NestedCVEnsembleEvaluator',
+    'format_nested_cv_report'
 ]

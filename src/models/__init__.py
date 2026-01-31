@@ -22,6 +22,12 @@ from .neural_nets import (
     create_neural_model
 )
 
+from .lstm_validation import (
+    LSTMSequenceValidator,
+    SequenceRequirements,
+    SequenceValidationResult
+)
+
 __all__ = [
     'LinearModelWrapper',
     'VECMWrapper',
@@ -31,5 +37,8 @@ __all__ = [
     'create_tree_model',
     'MLPWrapper',
     'LSTMWrapper',
-    'create_neural_model'
+    'create_neural_model',
+    'LSTMSequenceValidator',
+    'SequenceRequirements',
+    'SequenceValidationResult'
 ]

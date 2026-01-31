@@ -18,7 +18,29 @@ from scipy.spatial.distance import squareform
 import logging
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from enum import Enum
+from dataclasses import dataclass
+
 logger = logging.getLogger(__name__)
+
+
+class SelectionMethod(Enum):
+    """Feature selection methods for cluster representatives."""
+    CENTROID = "centroid"      # Target-agnostic
+    VARIANCE = "variance"      # Target-agnostic
+    FIRST = "first"            # Target-agnostic
+    RANDOM = "random"          # Target-agnostic
+    UNIVARIATE_IC = "univariate_ic"  # Target-dependent (requires lagged target)
+    AUTO = "auto"              # Dependent on size
+
+
+@dataclass
+class SelectionConfig:
+    """Configuration for feature selection."""
+    method: SelectionMethod = SelectionMethod.CENTROID
+    ic_lag_buffer_months: int = 24
+    ic_min_observations: int = 60
+    random_seed: int = 42
 
 
 class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
@@ -31,10 +53,18 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
     - Top N features represent N distinct economic forces
     """
     
+    # Methods that don't use the target
+    TARGET_AGNOSTIC_METHODS = {
+        SelectionMethod.CENTROID,
+        SelectionMethod.VARIANCE,
+        SelectionMethod.FIRST,
+        SelectionMethod.RANDOM
+    }
+
     def __init__(self,
                  similarity_threshold: float = 0.80,
                  linkage_method: str = 'average',
-                 selection_method: str = 'auto',
+                 selection_config: Optional[SelectionConfig] = None,
                  min_observations: int = 60):
         """
         Initialize clusterer.
@@ -42,12 +72,12 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         Args:
             similarity_threshold: Features with |corr| > threshold are in same cluster
             linkage_method: 'average', 'single', 'complete', or 'ward'
-            selection_method: 'auto', 'univariate_ic', 'centroid', or 'variance'
+            selection_config: Configuration for representative selection
             min_observations: Minimum observations for correlation calculation
         """
         self.similarity_threshold = similarity_threshold
         self.linkage_method = linkage_method
-        self.selection_method = selection_method
+        self.selection_config = selection_config or SelectionConfig()
         self.min_observations = min_observations
         
         # Results storage
@@ -58,6 +88,46 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         self.representatives: Optional[Dict[int, str]] = None
         self.selected_features_: List[str] = []
         self.fitted_ = False
+        
+        # Fold-specific state (set by CrossValidator)
+        self.fold_val_start: Optional[pd.Timestamp] = None
+
+        if self.selection_config.method == SelectionMethod.UNIVARIATE_IC:
+            logger.warning(
+                "Using IC-based feature selection. Ensure target is properly lagged "
+                f"by at least {self.selection_config.ic_lag_buffer_months} months."
+            )
+    
+    def _validate_target_for_ic_selection(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        fold_val_start: Optional[pd.Timestamp] = None
+    ) -> pd.Series:
+        """
+        Validate and prepare target for IC-based selection.
+        """
+        if fold_val_start is None:
+            # Shift target backwards to ensure no overlap
+            lag_months = self.selection_config.ic_lag_buffer_months
+            safe_target = y.shift(lag_months).dropna()
+            
+            if len(safe_target) < self.selection_config.ic_min_observations:
+                raise ValueError(
+                    f"Insufficient observations ({len(safe_target)}) after {lag_months}M lag"
+                )
+            return safe_target
+        else:
+            # Use only returns realized before validation
+            horizon = self.selection_config.ic_lag_buffer_months
+            safe_cutoff = fold_val_start - pd.DateOffset(months=horizon)
+            safe_target = y[y.index < safe_cutoff]
+            
+            if len(safe_target) < self.selection_config.ic_min_observations:
+                raise ValueError(
+                    f"Insufficient safe observations ({len(safe_target)}) for cutoff {safe_cutoff}"
+                )
+            return safe_target
     
     def compute_correlation_matrix(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -121,10 +191,10 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         Returns:
             Dictionary mapping cluster IDs to feature lists
         """
-        # Filter out constant columns (zero variance)
+        # Filter out constant columns (zero variance or all NaNs)
         # These cause NaNs in correlation matrix and break hierarchical clustering
         std = df.std()
-        constant_cols = std[std == 0].index.tolist()
+        constant_cols = std[pd.isna(std) | (std == 0)].index.tolist()
         if constant_cols:
             logger.debug(f"Removing {len(constant_cols)} constant features before clustering")
             df = df.drop(columns=constant_cols)
@@ -176,29 +246,15 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
     
     def select_representative(self, cluster_features: List[str],
                              df: pd.DataFrame,
-                             target: Optional[pd.Series] = None) -> str:
+                             target: Optional[pd.Series] = None,
+                             fold_val_start: Optional[pd.Timestamp] = None) -> str:
         """
-        Select representative feature from a cluster.
-        
-        Selection methods:
-        - univariate_ic: Highest Information Coefficient with target
-        - centroid: Most correlated with cluster centroid
-        - variance: Highest variance (most information)
-        - auto: Uses appropriate method based on cluster size
-        
-        Args:
-            cluster_features: List of features in cluster
-            df: Feature DataFrame
-            target: Optional target for IC calculation
-            
-        Returns:
-            Name of representative feature
+        Select representative feature from a cluster using configured method.
         """
         if len(cluster_features) == 1:
             return cluster_features[0]
         
         # Get cluster data
-        # Use only features present in the current dataframe
         present_features = [f for f in cluster_features if f in df.columns]
         if not present_features:
             return cluster_features[0]
@@ -206,65 +262,63 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         cluster_df = df[present_features].dropna()
         
         if len(cluster_df) < self.min_observations:
-            # Not enough data - return first feature
             return cluster_features[0]
         
-        method = self.selection_method
+        method = self.selection_config.method
         
         # Auto selection based on cluster size
-        if method == 'auto':
+        if method == SelectionMethod.AUTO:
             if len(cluster_features) <= 3:
-                method = 'univariate_ic' if target is not None else 'variance'
-            elif len(cluster_features) <= 9:
-                method = 'centroid'
+                method = SelectionMethod.UNIVARIATE_IC if target is not None else SelectionMethod.VARIANCE
             else:
-                method = 'centroid'  # Centroid is most stable for large clusters
+                method = SelectionMethod.CENTROID
         
-        if method == 'univariate_ic' and target is not None:
-            # Select feature with highest IC
-            target_aligned = target.reindex(cluster_df.index)
-            
-            ics = {}
-            for col in cluster_features:
+        if method == SelectionMethod.UNIVARIATE_IC:
+            if target is None:
+                method = SelectionMethod.CENTROID
+            else:
                 try:
-                    ic = cluster_df[col].corr(target_aligned, method='spearman')
-                    ics[col] = abs(ic) if not pd.isna(ic) else 0
-                except:
-                    ics[col] = 0
-            
-            return max(ics, key=ics.get)
+                    safe_target = self._validate_target_for_ic_selection(df, target, fold_val_start or self.fold_val_start)
+                    ics = {}
+                    for col in present_features:
+                        common_idx = cluster_df[col].index.intersection(safe_target.index)
+                        if len(common_idx) < 20:
+                            ics[col] = 0
+                            continue
+                        ic = cluster_df[col].loc[common_idx].corr(safe_target.loc[common_idx], method='spearman')
+                        ics[col] = abs(ic) if not pd.isna(ic) else 0
+                    return max(ics, key=ics.get)
+                except Exception as e:
+                    logger.warning(f"IC selection fallback to centroid: {e}")
+                    method = SelectionMethod.CENTROID
         
-        elif method == 'centroid':
-            # Select feature most correlated with cluster centroid
+        if method == SelectionMethod.CENTROID:
             centroid = cluster_df.mean(axis=1)
-            
-            correlations = {}
-            for col in cluster_features:
-                try:
-                    corr = cluster_df[col].corr(centroid, method='spearman')
-                    correlations[col] = abs(corr) if not pd.isna(corr) else 0
-                except:
-                    correlations[col] = 0
-            
-            return max(correlations, key=correlations.get)
+            correlations = {col: abs(cluster_df[col].corr(centroid, method='spearman')) for col in present_features}
+            return max(correlations, key=lambda k: correlations.get(k, 0))
         
-        elif method == 'variance':
-            # Select feature with highest variance (most information)
-            variances = cluster_df.var()
-            return variances.idxmax()
+        elif method == SelectionMethod.VARIANCE:
+            return cluster_df.var().idxmax()
+            
+        elif method == SelectionMethod.FIRST:
+            return sorted(present_features)[0]
+            
+        elif method == SelectionMethod.RANDOM:
+            np.random.seed(self.selection_config.random_seed)
+            return np.random.choice(present_features)
         
-        else:
-            # Fallback
-            return cluster_features[0]
+        return cluster_features[0]
     
     def select_all_representatives(self, df: pd.DataFrame,
-                                   target: Optional[pd.Series] = None) -> List[str]:
+                                    target: Optional[pd.Series] = None,
+                                    fold_val_start: Optional[pd.Timestamp] = None) -> List[str]:
         """
         Select representative for each cluster.
         
         Args:
             df: Feature DataFrame
             target: Optional target for IC-based selection
+            fold_val_start: Optional fold validation start
             
         Returns:
             List of representative feature names
@@ -275,7 +329,7 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         self.representatives = {}
         
         for cluster_id, features in self.clusters.items():
-            rep = self.select_representative(features, df, target)
+            rep = self.select_representative(features, df, target, fold_val_start)
             self.representatives[cluster_id] = rep
         
         rep_list = list(self.representatives.values())
@@ -284,18 +338,12 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         return rep_list
     
     def get_reduced_features(self, df: pd.DataFrame,
-                            target: Optional[pd.Series] = None) -> pd.DataFrame:
+                            target: Optional[pd.Series] = None,
+                            fold_val_start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
         """
         Get DataFrame with only representative features.
-        
-        Args:
-            df: Full feature DataFrame
-            target: Optional target for selection
-            
-        Returns:
-            Reduced DataFrame
         """
-        representatives = self.select_all_representatives(df, target)
+        representatives = self.select_all_representatives(df, target, fold_val_start)
         return df[representatives]
     
     def get_cluster_info(self) -> pd.DataFrame:
@@ -320,17 +368,14 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         
         return pd.DataFrame(rows).sort_values('Size', ascending=False)
 
-    def fit(self, X: pd.DataFrame, y: Any = None):
+    def fit(self, X: Any, y: Any = None, fold_val_start: Optional[pd.Timestamp] = None):
         """
         Scikit-learn fit method.
-        
-        Args:
-            X: Feature DataFrame
-            y: Optional target for IC-based selection
-            
-        Returns:
-            self
         """
+        # Ensure DataFrame for consistent indexing and metadata
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+            
         if hasattr(X, 'columns'):
             self.feature_names_in_ = X.columns.tolist()
             
@@ -338,20 +383,24 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         self.clusters = None
         self.representatives = None
         self.cluster_labels = None
+        
+        # Capture fold info if provided (sometimes passed via fit_params)
+        if fold_val_start is not None:
+            self.fold_val_start = fold_val_start
             
         # If y is provided and selection_method is 'univariate_ic' or 'auto',
         # we can use it for representative selection.
-        self.selected_features_ = self.select_all_representatives(X, target=y)
+        self.selected_features_ = self.select_all_representatives(X, target=y, fold_val_start=fold_val_start)
         self.fitted_ = True
         return self
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+    def transform(self, X: Any) -> pd.DataFrame:
         """
         Scikit-learn transform method.
         Subsets DataFrame to only include selected features.
         
         Args:
-            X: Full feature DataFrame
+            X: Full feature DataFrame or array
             
         Returns:
             Reduced DataFrame
@@ -359,6 +408,13 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         if not self.fitted_:
             raise ValueError("Transformer must be fitted before calling transform.")
             
+        # Ensure DataFrame
+        if not isinstance(X, pd.DataFrame):
+            if self.feature_names_in_ is not None:
+                X = pd.DataFrame(X, columns=self.feature_names_in_)
+            else:
+                X = pd.DataFrame(X)
+
         # Ensure we only try to select columns that exist
         available_features = [f for f in self.selected_features_ if f in X.columns]
         

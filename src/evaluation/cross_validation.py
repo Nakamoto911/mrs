@@ -173,21 +173,29 @@ class CrossValidator:
                 # Clone model (if possible) or use as-is
                 fold_model = self._clone_model(model)
                 
+                # Pass fold validation start to pipeline steps (for safe feature selection)
+                if hasattr(fold_model, 'named_steps'):
+                    clustering_step = fold_model.named_steps.get('clustering')
+                    if clustering_step is not None:
+                        # Set fold-specific validation start
+                        clustering_step.fold_val_start = fold.val_start
+                        logger.debug(f"  Set fold_val_start={fold.val_start.date()} on clustering step")
+
                 # Fit
                 fold_model.fit(X_train, y_train)
                 
                 # Predict
                 predictions = fold_model.predict(X_val)
                 
-                # Compute metrics
-                metrics = self._compute_metrics(y_val, predictions, target, horizon=24) # Defaulting to 24, should ideally come from config
+                # Compute metrics (handle numpy array output from standard sklearn models)
+                metrics = self._compute_metrics(y_val, predictions, target, horizon=24)
                 metrics['fold_id'] = fold.fold_id
                 fold_metrics.append(metrics)
                 
                 # Store predictions
                 pred_df = pd.DataFrame({
                     'actual': y_val.values,
-                    'predicted': predictions.values,
+                    'predicted': np.array(predictions).flatten(),
                     'fold': fold.fold_id
                 }, index=y_val.index)
                 all_predictions.append(pred_df)
@@ -211,7 +219,8 @@ class CrossValidator:
                     all_importances.append(importance)
                 
             except Exception as e:
-                logger.warning(f"Fold {fold.fold_id} failed: {e}")
+                import traceback
+                logger.warning(f"Fold {fold.fold_id} failed: {e}\n{traceback.format_exc()}")
                 continue
         
         if not fold_metrics:
@@ -250,11 +259,15 @@ class CrossValidator:
             # Return the same model instance
             return model
     
-    def _compute_metrics(self, y_true: pd.Series, y_pred: pd.Series,
+    def _compute_metrics(self, y_true: pd.Series, y_pred: Any,
                         target: str, horizon: int = 24) -> Dict[str, float]:
         """Compute evaluation metrics with overlap adjustment."""
         from .inference import compute_ic_with_inference
         
+        # Ensure y_pred is a Series aligned with y_true index
+        if not isinstance(y_pred, pd.Series):
+            y_pred = pd.Series(np.array(y_pred).flatten(), index=y_true.index)
+
         # Remove NaN
         mask = ~(y_true.isna() | y_pred.isna())
         y_true_clean = y_true[mask]

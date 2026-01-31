@@ -15,8 +15,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
 from sklearn.base import BaseEstimator
+from preprocessing import TimeSeriesScaler, PointInTimeImputer
 from .lstm_v2 import LSTMWrapperV2
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ class MLPWrapper(BaseEstimator):
         self.kwargs = kwargs
         
         self.model = None
-        self.scaler = StandardScaler()
+        self.scaler = TimeSeriesScaler(method='standard')
+        self.imputer = PointInTimeImputer(strategy='median')
         self.feature_names = None
         self.input_dim = None
         self.fitted_ = False
@@ -116,39 +117,65 @@ class MLPWrapper(BaseEstimator):
         self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
         X_filtered = X_sync[self.feature_names]
         
-        # 3. Strict Rolling Imputation (No Look-ahead)
-        # 1. Compute rolling stats (shifted by 1)
-        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
+        # 3. Point-in-Time Imputation
+        X_imputed = self.imputer.transform_expanding(X_filtered)
         
-        # 2. Impute with rolling medians, then 0.0 as final fallback
-        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
+        # 4. Point-in-Time Scaling
+        X_scaled = self.scaler.fit_transform_rolling(X_imputed)
         
-        # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
-        self.fill_values = X_filtered.median().fillna(0.0)
+        # Final safety check: ensure no NaNs and align
+        final_mask = ~(X_scaled.isna().any(axis=1) | y_sync.isna())
+        if final_mask.sum() < 20:
+             raise ValueError(f"Insufficient valid data after scaling (N={final_mask.sum()})")
+             
+        X_final = X_scaled[final_mask]
+        y_final = y_sync[final_mask]
         
-        # 4. Scale features
-        # Note: robust scaling + dropout helps NNs handle noise
-        X_scaled = self.scaler.fit_transform(X_imputed)
-        
-        if len(X_scaled) < 20:
-             raise ValueError("Insufficient data for fitting")
-        
-        self.input_dim = X_scaled.shape[1]
+        self.input_dim = X_final.shape[1]
         
         # Create and fit model
         self.model = self._create_model(self.input_dim)
         
         if hasattr(self.model, 'fit'):
             # sklearn interface
-            self.model.fit(X_scaled, y_sync)
+            self.model.fit(X_final, y_final)
         else:
             # Prepare tensors
-            X_tensor = torch.FloatTensor(X_scaled)
-            y_tensor = torch.FloatTensor(y_sync.values).reshape(-1, 1)
+            try:
+                X_vals = X_final.values
+                y_vals = y_final.values
+                # Check for object dtype
+                if X_vals.dtype == object:
+                     logger.warning("X_final.values is object type! Converting to float32...")
+                     X_vals = X_vals.astype(np.float32)
+                if y_vals.dtype == object:
+                     logger.warning("y_final.values is object type! Converting to float32...")
+                     y_vals = y_vals.astype(np.float32)
+
+                X_tensor = torch.FloatTensor(X_vals)
+                y_tensor = torch.FloatTensor(y_vals).reshape(-1, 1)
+            except Exception as e:
+                logger.error(f"Tensor conversion failed: {e}")
+                logger.error(f"X_final shape: {X_final.shape}, dtypes: {X_final.dtypes}")
+                raise e
             
-            # PyTorch training would go here
-            pass
-        
+            # PyTorch training
+            self.model.train()
+            optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            criterion = nn.MSELoss()
+            
+            # Simple batching
+            dataset = TensorDataset(X_tensor, y_tensor)
+            loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+            
+            for epoch in range(self.epochs):
+                for batch_X, batch_y in loader:
+                    optimizer.zero_grad()
+                    outputs = self.model(batch_X)
+                    loss = criterion(outputs, batch_y)
+                    loss.backward()
+                    optimizer.step()
+                    
         self.fitted_ = True
         return self
     
@@ -161,7 +188,7 @@ class MLPWrapper(BaseEstimator):
         X_filtered = X[self.feature_names]
         
         # Impute
-        X_imputed = X_filtered.fillna(self.fill_values)
+        X_imputed = self.imputer.transform(X_filtered)
         
         # Scale
         X_scaled = self.scaler.transform(X_imputed)
@@ -173,7 +200,17 @@ class MLPWrapper(BaseEstimator):
             # PyTorch inference
             self.model.eval()
             with torch.no_grad():
-                X_tensor = torch.FloatTensor(X_scaled)
+                # Fix: Handle DataFrame input and object types
+                if hasattr(X_scaled, 'values'):
+                    X_vals = X_scaled.values
+                else:
+                    X_vals = X_scaled
+                
+                if X_vals.dtype == object:
+                    logger.warning("X_scaled in predict is object type! Converting to float32...")
+                    X_vals = X_vals.astype(np.float32)
+                    
+                X_tensor = torch.FloatTensor(X_vals)
                 predictions = self.model(X_tensor).numpy()
         
         return pd.Series(predictions.flatten(), index=X.index)
@@ -261,10 +298,10 @@ class LSTMWrapper(BaseEstimator):
         self.batch_size = batch_size
         
         self.model = None
-        self.scaler = StandardScaler()
+        self.scaler = TimeSeriesScaler(method='standard')
+        self.imputer = PointInTimeImputer(strategy='median')
         self.feature_names = None
         self.fitted_ = False
-        self.fill_values = None
         
         # Auto-detect device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
@@ -302,16 +339,11 @@ class LSTMWrapper(BaseEstimator):
         self.feature_names = [c for c in X_sync.columns if c not in all_nan_features]
         X_filtered = X_sync[self.feature_names]
         
-        # 3. Robust Imputation (Preserve Sequence/Temporal structure)
-        # Use expanding median to avoid look-ahead, then 0.0 as final fallback
-        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
-        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
+        # 3. Point-in-Time Imputation
+        X_imputed = self.imputer.transform_expanding(X_filtered)
         
-        # Store fill values for inference
-        self.fill_values = X_filtered.median().fillna(0.0)
-        
-        # 4. Scale features
-        X_scaled = self.scaler.fit_transform(X_imputed)
+        # 4. Point-in-Time Scaling
+        X_scaled = self.scaler.fit_transform_rolling(X_imputed)
         
         # 5. Create Sequences
         X_seq, y_seq = self._create_sequences(X_scaled, y_sync.values)
@@ -363,12 +395,12 @@ class LSTMWrapper(BaseEstimator):
         X_filtered = X[self.feature_names]
         
         # Impute
-        X_imputed = X_filtered.fillna(self.fill_values)
+        X_imputed = self.imputer.transform(X_filtered)
         
         # Scale
         X_scaled = self.scaler.transform(X_imputed)
         
-        # Sliding Window Generation for Batch Inference
+        # Sliding Window Generation
         # We need alignment with X.index.
         # Pad the beginning with zeros for the first (sequence_length - 1) indices.
         

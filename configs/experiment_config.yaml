@@ -106,6 +106,8 @@ features:
       - "M2REAL"        # Real M2
     n_quintiles: 5
     encoding: "one_hot"  # or "z_score_within_regime"
+    min_observations: 60
+    monotonicity_threshold: 0.8
 
   # Cointegration pairs (theory-driven)
   cointegration:
@@ -117,10 +119,22 @@ features:
     # Stability requirements
     stability_threshold: 0.70  # 70% of rolling windows must show cointegration
     
-    # Theory override for pairs with very strong priors
-    allow_theory_override: true
-    theory_override_pairs:
-      - "consumption_income"
+    # Bayesian Prior Weighting (NEW Spec 03)
+    priors:
+      enabled: true
+      evidence_method: "logistic"
+      logistic_k: 10.0
+      logistic_p0: 0.10
+      stability_enabled: true
+      min_weight_threshold: 0.3
+      pair_priors:
+        consumption_income: 0.8
+        fisher_hypothesis: 0.6
+        yields_inflation: 0.6
+        quantity_theory: 0.5
+        okun_law: 0.4
+        housing_rates: 0.3
+        stocks_gdp: 0.2
     
     # Pairs to test (theory column is informational)
     pairs:
@@ -151,10 +165,36 @@ features:
     similarity_threshold: 0.80  # |correlation| > 0.80 = same cluster
     linkage_method: "average"   # balance between single and complete
     distance_metric: "correlation"
-    selection_method:
-      small_cluster: "univariate_ic"      # clusters 2-3 features
-      medium_cluster: "centroid"          # clusters 4-9 features
-      large_cluster: "centroid_validated" # clusters 10+ features
+    # Feature selection within clusters
+    selection:
+      method: "centroid"  # DEFAULT: Use target-agnostic method
+      
+      # If using IC-based selection:
+      ic_based:
+        enabled: false  # Disabled by default
+        lag_buffer_months: 24  # Must exceed forecast horizon
+        min_observations: 60   # Minimum obs for IC calculation
+
+# =============================================================================
+# Inference Configuration
+# =============================================================================
+inference:
+  effective_sample_size:
+    method: "newey_west"  # "simple", "newey_west", "hansen_hodrick", "autocorr"
+    
+    # Newey-West settings
+    newey_west:
+      bandwidth_method: "auto"  # "auto" (Andrews), "fixed", or integer
+      fixed_bandwidth: null
+      kernel: "bartlett"  # "bartlett", "parzen"
+    
+    # Autocorrelation-based settings
+    autocorr:
+      max_lags: 36  # Max lags to consider
+      significance_threshold: 0.05
+      
+    # Reporting
+    report_all_methods: true  # Compare all methods in output
 
 # =============================================================================
 # Model Configuration
@@ -224,8 +264,14 @@ models:
       learning_rate_range: [0.0001, 0.01]
     lstm:
       enabled: true
-      sequence_strategy: "medium"  # short, medium, adaptive, full
-      # sequence_length: 24  # Optional override
+      sequence:
+        length: 12  # Months per sequence
+        stride: 1   # Step between sequences (1 = full overlap)
+      min_requirements:
+        min_total_sequences: 50    # Minimum across all data
+        min_train_sequences: 30    # Minimum in training fold
+        min_val_sequences: 10      # Minimum in validation fold
+        safety_margin_pct: 0.10    # 10% buffer for NaN losses
       hidden_size: 32       # Reduced from 64
       n_layers: 1           # Reduced from 2
       use_attention: true   # Temporal attention
@@ -238,7 +284,6 @@ models:
       patience: 15          # Early stopping
       min_epochs: 20
       mc_dropout_samples: 50
-      min_sequences: 30     # Warn if fewer sequences
     tcn:
       enabled: false  # Optional
       kernel_size_range: [2, 5]
@@ -272,6 +317,14 @@ validation:
     validation_months: 36  # Increased to 36 months to exceed 24M horizon
     step_months: 6  # semi-annual rebalancing
     n_folds: "auto"  # depends on data length
+
+  # NEW: Holdout configuration (Added per Spec 01)
+  holdout:
+    enabled: true
+    method: "percentage"
+    holdout_pct: 0.15  # Last 15% of data
+    min_holdout_months: 48
+    min_independent_obs: 20
 
   # Hyperparameter optimization
   optuna:
@@ -308,6 +361,14 @@ metrics:
     kernel: "bartlett"     # bartlett, parzen, quadratic
     bootstrap_reps: 1000
     alpha: 0.05           # Significance level
+    
+  # NEW: Robustness Suite (Spec 11)
+  robustness:
+    placebo_shuffles: 1000
+    subsample_splits: 4
+    economic_significance:
+      costs_bps: 10
+      vol_target: 0.10
     
   # =============================================================================
   # Performance Thresholds (Calibrated to Academic Literature)
@@ -417,3 +478,16 @@ output:
 ensemble:
   enabled: true
   size: 5
+  
+  # Selection Strategy
+  selection:
+    method: "nested_cv"  # "simple" (top-N of current CV), "nested_cv", or "fixed"
+    
+    nested_cv:
+      n_outer_folds: 5
+      n_inner_folds: 4
+      outer_min_train_months: 120
+      inner_min_train_months: 84
+    
+    fixed:
+      models: ["ridge", "xgboost", "lightgbm"]

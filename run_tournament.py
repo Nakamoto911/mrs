@@ -30,8 +30,15 @@ from sklearn.exceptions import ConvergenceWarning
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
-from preprocessing import FREDMDLoader, AssetPriceLoader, FREDMDTransformer, LaggedAligner
-from preprocessing import identify_level_stationary_features
+from preprocessing import (
+    FREDMDLoader,
+    AssetPriceLoader,
+    FREDMDTransformer,
+    LaggedAligner,
+    identify_level_stationary_features,
+    TimeSeriesScaler,
+    PointInTimeImputer
+)
 from feature_engineering import (
     generate_all_ratio_features,
     generate_all_quintile_features,
@@ -39,66 +46,58 @@ from feature_engineering import (
     generate_all_momentum_features,
     reduce_features_by_clustering
 )
-from models import create_linear_model, create_tree_model, create_neural_model
+from models import (
+    create_linear_model,
+    create_tree_model,
+    create_neural_model,
+    LSTMSequenceValidator,
+    SequenceRequirements
+)
 from evaluation import (
-    TimeSeriesCV,
-    CrossValidator,
-    compute_all_metrics,
     SHAPAnalyzer,
     benchmark_model,
-    format_benchmark_report
+    format_benchmark_report,
+    NestedCVEnsembleEvaluator,
+    format_nested_cv_report,
+    TimeSeriesCV,
+    CVResult,
+    CrossValidator
 )
 from evaluation.ensemble import EnsembleEvaluator
+from evaluation.holdout import (
+    HoldoutManager,
+    validate_holdout_never_touched
+)
+from evaluation.multiple_testing import (
+    MultipleTestingCorrector,
+    HypothesisTest,
+    format_mtc_report
+)
 from sklearn.pipeline import Pipeline
-from feature_engineering.cointegration import CointegrationAnalyzer
+from sklearn.base import clone
+from sklearn.linear_model import Ridge
+from feature_engineering import (
+    CointegrationAnalyzer,
+    HierarchicalClusterSelector,
+    SelectionConfig,
+    SelectionMethod
+)
 from feature_engineering.cointegration_validator import (
     format_cointegration_report,
     CointegrationStatus
 )
-from feature_engineering.hierarchical_clustering import HierarchicalSelector
 from models.ensemble import EnsembleModel
 from models.lstm_v2 import get_sequence_length, SequenceStrategy
-
-
-def should_run_lstm(X: pd.DataFrame, config: dict) -> Tuple[bool, str]:
-    """
-    Determine if LSTM should be run based on sample size.
-    
-    Returns:
-        (should_run, reason)
-    """
-    n_samples = len(X)
-    
-    # Get effective sequence length
-    seq_len = get_sequence_length(
-        SequenceStrategy(config.get('sequence_strategy', 'medium')),
-        config.get('forecast_horizon', 24)
-    )
-    
-    n_independent = n_samples // seq_len
-    min_required = config.get('min_sequences', 30)
-    
-    if n_independent < min_required:
-        return False, (
-            f"Insufficient independent sequences: {n_independent} < {min_required}. "
-            f"LSTM skipped to avoid overfitting."
-        )
-    
-    # Warn if marginal
-    if n_independent < min_required * 2:
-        logger.debug(
-            f"Marginal sample size for LSTM: {n_independent} sequences. "
-            "Results should be interpreted with caution."
-        )
-    
-    return True, "OK"
-
+from preprocessing.scaling import TimeSeriesScaler
+from preprocessing.imputation import PointInTimeImputer
+from evaluation.robustness import run_suite
 
 # Configure logging
 Path('experiments/tournament_logs').mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s',
+    format='%(asctime)s | %(levelname)-7s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.StreamHandler(),
         # logging.FileHandler(f'experiments/tournament_logs/tournament_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
@@ -145,6 +144,10 @@ class ModelTournament:
         
         # Initialize paths
         self.data_dir = Path('data')
+        # Use configured path or default to experiments
+        experiment_path = self.config.get('output', {}).get('paths', {}).get('base', 'experiments')
+        # Handle the case where config points to subdirs explicitly but we need base
+        # Simplest is to default to 'experiments' since config defines subpaths like 'experiments/features'
         self.experiments_dir = Path('experiments')
         self._setup_directories()
         
@@ -152,6 +155,24 @@ class ModelTournament:
         self.features: Optional[pd.DataFrame] = None
         self.targets: Dict[str, pd.Series] = {}
         self.results: Dict = {}
+        
+        # Initialize holdout manager
+        holdout_cfg = self.config.get('validation', {}).get('holdout', {})
+        self.holdout_enabled = holdout_cfg.get('enabled', True)
+        
+        if self.holdout_enabled:
+            # Get horizon from config
+            horizon = self.config.get('models', {}).get('targets', {}).get('returns', {}).get('horizon_months', 24)
+            self.holdout_manager = HoldoutManager(
+                method=holdout_cfg.get('method', 'percentage'),
+                holdout_pct=holdout_cfg.get('holdout_pct', 0.15),
+                holdout_start=holdout_cfg.get('holdout_start'),
+                min_holdout_months=holdout_cfg.get('min_holdout_months', 48),
+                min_independent_obs=holdout_cfg.get('min_independent_obs', 20),
+                forecast_horizon=horizon
+            )
+        else:
+            self.holdout_manager = None
     
     def _load_config(self) -> dict:
         """Load configuration file."""
@@ -162,18 +183,18 @@ class ModelTournament:
     
     def _setup_directories(self):
         """Create necessary directories."""
-        dirs = [
-            self.experiments_dir / 'features',
-            self.experiments_dir / 'models',
-            self.experiments_dir / 'cv_results',
-            self.experiments_dir / 'shap',
-            self.experiments_dir / 'regimes',
-            self.experiments_dir / 'reports',
-            self.experiments_dir / 'tournament_logs',
-            self.experiments_dir / 'predictions',
-        ]
-        for d in dirs:
-            d.mkdir(parents=True, exist_ok=True)
+        self.experiments_dir.mkdir(parents=True, exist_ok=True)
+        (self.experiments_dir / 'models').mkdir(exist_ok=True)
+        (self.experiments_dir / 'predictions').mkdir(exist_ok=True)
+        (self.experiments_dir / 'features').mkdir(exist_ok=True)
+        (self.experiments_dir / 'logs').mkdir(exist_ok=True)
+        (self.experiments_dir / 'benchmarks').mkdir(exist_ok=True)
+        # Re-add other directories that were implicitly removed by the instruction's snippet
+        (self.experiments_dir / 'cv_results').mkdir(exist_ok=True)
+        (self.experiments_dir / 'shap').mkdir(exist_ok=True)
+        (self.experiments_dir / 'regimes').mkdir(exist_ok=True)
+        (self.experiments_dir / 'reports').mkdir(exist_ok=True)
+        (self.experiments_dir / 'tournament_logs').mkdir(exist_ok=True)
     
     def run_feature_pipeline(self, fred_api_key: Optional[str] = None) -> pd.DataFrame:
         """
@@ -417,72 +438,43 @@ class ModelTournament:
             # This effectively shifts X forward, ensuring X[t] is actually data from t-lag
             X, y = aligner.align_features_and_targets(self.features, y.dropna())
             
-            logger.info(f"    Aligned data with {pub_lag} month lag. {len(X)} samples remaining.")
-            logger.info(f"    Forwarding {len(X.columns)} features to model layer")
+            # --- HOLDOUT SPLIT ---
+            if self.holdout_enabled:
+                X_dev, y_dev, X_holdout, y_holdout = self.holdout_manager.split_data(X, y)
+                logger.info(f"    Holdout enabled. Development: {len(X_dev)} samples, Holdout: {len(X_holdout)} samples")
+                X_train, y_train = X_dev, y_dev
+            else:
+                X_train, y_train = X, y
+                X_holdout, y_holdout = None, None
+
+            logger.info(f"    Aligned data with {pub_lag} month lag. {len(X_train)} training samples available.")
+            logger.info(f"    Forwarding {len(X_train.columns)} features to model layer")
             
             # Track fold metadata for cointegration report (shared across models)
             latest_fold_metadata = None
 
             for model_name in models:
+                result = None
                 # Gating logic for LSTM
                 if 'lstm' in model_name:
-                    model_config = self.MODEL_CONFIGS.get(model_name, {}) # This gets the top-level config, confusing?
-                    # Actually self.MODEL_CONFIGS only has minimal params.
-                    # We need the full config from self.config['models']['neural']['lstm']
-                    lstm_full_config = self.config.get('models', {}).get('neural', {}).get('lstm', {})
-                    
-                    should_run, reason = should_run_lstm(X, lstm_full_config)
-                    if not should_run:
-                        logger.warning(f"  Skipping {model_name}: {reason}")
+                    cv_folds = list(validator.cv.split(X_train))
+                    should_skip, reason = self._should_skip_lstm(X_train, y_train, cv_folds)
+                    if should_skip:
+                        logger.warning(f"  Skipping {model_name} for {asset}: {reason}")
+                        self._log_lstm_skip(asset, reason)
                         continue
 
                 logger.info(f"  Training {model_name}...")
-                
+                start = time.time()
                 try:
-                    start = time.time()
-                    
                     # Train model
-                    # Define Point-in-Time Pipeline with an UNFITTED model instance
-                    # We obtain a fresh instance from the factory using same config
-                    model_config = self.MODEL_CONFIGS.get(model_name)
-                    model_type = model_config['type']
-                    params = model_config['params']
-                    
-                    if model_type == 'linear':
-                        model_instance = create_linear_model(model_name, **params)
-                    elif model_type == 'tree':
-                        model_instance = create_tree_model(model_name, **params)
-                    elif model_type == 'neural':
-                        model_instance = create_neural_model(model_name.replace('_', ''), **params)
-                    
-                    # Create pairs config from experiment_config if possible
-                    coint_cfg = self.config.get('features', {}).get('cointegration', {})
-                    coint_pairs_raw = coint_cfg.get('pairs', CointegrationAnalyzer.DEFAULT_PAIRS)
-                    
-                    coint_pairs = []
-                    for p in coint_pairs_raw:
-                        if len(p) >= 3:
-                            # (series1, series2, name, theory)
-                             coint_pairs.append((f"{p[0]}_level", f"{p[1]}_level", p[2], p[3] if len(p) > 3 else ''))
-
-                    pipeline_steps = [
-                        ('cointegration', CointegrationAnalyzer(
-                            pairs=coint_pairs,
-                            validate=coint_cfg.get('validate', True),
-                            significance=coint_cfg.get('significance_level', 0.05),
-                            min_observations=coint_cfg.get('min_observations', 120),
-                            stability_threshold=coint_cfg.get('stability_threshold', 0.70),
-                            allow_theory_override=coint_cfg.get('allow_theory_override', True)
-                        )),
-                        ('clustering', HierarchicalSelector(similarity_threshold=0.80)),
-                        ('model', model_instance)
-                    ]
-                    pipeline = Pipeline(pipeline_steps)
+                    model_instance = self._create_model(model_name)
+                    pipeline = self._pipeline_factory(model_instance)
                     
                     # Cross-validation
                     result = validator.evaluate(
                         pipeline,
-                        X, y,
+                        X_train, y_train,
                         model_name=model_name,
                         asset=asset,
                         target='return'
@@ -541,8 +533,8 @@ class ModelTournament:
                     
                     # Save model (save the full pipeline)
                     # We must fit the pipeline on the full dataset before saving
-                    logger.info(f"    Refitting {model_name} on full history for persistence...")
-                    pipeline.fit(X, y)
+                    logger.info(f"    Refitting {model_name} on development history for persistence...")
+                    pipeline.fit(X_train, y_train)
                     
                     # Save model (using .joblib to avoid permission issues with .pkl)
                     model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
@@ -567,7 +559,7 @@ class ModelTournament:
                 
                 
                 # Capture fold metadata for reporting
-                if hasattr(result, 'fold_metadata') and result.fold_metadata:
+                if result is not None and hasattr(result, 'fold_metadata') and result.fold_metadata:
                     latest_fold_metadata = result.fold_metadata
             
             # LOG COINTEGRATION VALIDATION REPORT (Once per asset)
@@ -621,7 +613,11 @@ class ModelTournament:
                             constituent_names.append(m_name)
                     
                     if pred_paths:
-                        # 4. Execute Ensemble
+                        # NEW: Nested CV evaluation for unbiased ensemble estimate
+                        if self.config.get('ensemble', {}).get('selection', {}).get('nested_cv', {}).get('enabled', False):
+                            self.run_nested_cv_ensemble_evaluation([asset])
+
+                        # 4. Execute Standard Ensemble (Potentially Biased)
                         evaluator = EnsembleEvaluator()
                         ensemble_df = evaluator.load_and_average(pred_paths)
                         metrics = evaluator.compute_ensemble_metrics(ensemble_df)
@@ -720,10 +716,366 @@ class ModelTournament:
                 logger.error(f"Error merging with existing results: {e}")
                 # Fallback: Just save what we have if merge fails (better than crashing)
         
+        # Apply multiple testing correction
+        self.apply_multiple_testing_correction(results_df)
+        
         results_df.to_csv(results_path, index=False)
         
         self.results = results_df
+        
+        # --- Robustness Suite (Spec 11) ---
+        self.run_robustness_checks(results_df, assets)
+        
+        # AFTER all development is complete, evaluate on holdout
+        if self.holdout_enabled:
+            self.evaluate_holdout(assets, models)
+            
         return results_df
+    
+    def run_robustness_checks(self, df: pd.DataFrame, assets: List[str]):
+        """Perform robust evaluation for champion models of each asset."""
+        logger.info("=" * 60)
+        logger.info("STEP 2.6: COMPREHENSIVE ROBUSTNESS SUITE (Spec 11)")
+        logger.info("=" * 60)
+        
+        for asset in assets:
+            asset_df = df[df['asset'] == asset].copy()
+            # Filter for successful models only
+            asset_df = asset_df[asset_df['IC_mean'].notna()]
+            if asset_df.empty:
+                logger.warning(f"  No successful models found for {asset}, skipping robustness checks.")
+                continue
+            
+            # Find champion (highest IC)
+            champion_idx = asset_df['IC_mean'].idxmax()
+            champion = asset_df.loc[champion_idx]
+            model_name = champion['model']
+            
+            logger.info(f"  Analyzing Champion for {asset}: {model_name} (IC={champion['IC_mean']:.3f})")
+            
+            # Load OOS predictions
+            pred_path = self.experiments_dir / 'predictions' / f'{asset}_{model_name}_preds.csv'
+            if not pred_path.exists():
+                logger.warning(f"    Predictions not found at {pred_path}, skipping robustness suite.")
+                continue
+            
+            preds_df = pd.read_csv(pred_path, index_col=0, parse_dates=True)
+            if 'prediction' not in preds_df.columns or 'actual' not in preds_df.columns:
+                logger.warning(f"    Invalid prediction format in {pred_path}, skipping.")
+                continue
+            
+            # Run suite
+            robustness_results = run_suite(y_true=preds_df['actual'], y_pred=preds_df['prediction'])
+            
+            # Log results
+            placebo = robustness_results['placebo']
+            logger.info(f"    Placebo Test: p={placebo.p_value:.3f} ({'PASS' if placebo.is_significant else 'FAIL'})")
+            
+            econ = robustness_results['economic']
+            logger.info(f"    Economic Sig: Ann_Ret={econ['Annualized_Return']:.1%}, Sharpe={econ['Sharpe']:.2f}")
+            
+            if econ['Sharpe'] < 0.5:
+                logger.warning(f"    CAUTION: Low economic significance for {asset} champion!")
+
+    def apply_multiple_testing_correction(self, df: pd.DataFrame):
+        """
+        Apply multiple testing corrections to the tournament results.
+        """
+        mtc_cfg = self.config.get('inference', {}).get('multiple_testing', {})
+        if not mtc_cfg.get('enabled', True):
+            return
+            
+        logger.info("=" * 60)
+        logger.info("STEP 2.5: MULTIPLE TESTING CORRECTION")
+        logger.info("=" * 60)
+        
+        tests = []
+        for i, row in df.iterrows():
+            if pd.isna(row.get('IC_p_value')):
+                continue
+                
+            tests.append(HypothesisTest(
+                test_id=f"{row['asset']}_{row['model']}",
+                asset=row['asset'],
+                model=row['model'],
+                target='return',
+                p_value=row['IC_p_value'],
+                ic_estimate=row['IC_mean'],
+                t_statistic=row['IC_t_stat']
+            ))
+            
+        if not tests:
+            logger.warning("No tests found for multiple testing correction")
+            return
+            
+        corrector = MultipleTestingCorrector(
+            fwer_alpha=mtc_cfg.get('fwer_alpha', 0.05),
+            fdr_alpha=mtc_cfg.get('fdr_alpha', 0.10)
+        )
+        
+        mtc_results = corrector.correct_all_methods(tests)
+        
+        # Log report
+        report = format_mtc_report(mtc_results)
+        logger.info("\n" + report)
+        
+        # Update results with q-values and significance
+        bh_result = mtc_results['benjamini_hochberg']
+        details_df = bh_result.test_details.set_index('test_id')
+        
+        df['q_value'] = np.nan
+        df['sig_fdr'] = False
+        
+        for i, row in df.iterrows():
+            test_id = f"{row['asset']}_{row['model']}"
+            if test_id in details_df.index:
+                df.at[i, 'q_value'] = details_df.at[test_id, 'q_value']
+                df.at[i, 'sig_fdr'] = details_df.at[test_id, 'sig_adjusted']
+                
+        return mtc_results
+
+    def _get_coint_pairs(self):
+        coint_cfg = self.config.get('features', {}).get('cointegration', {})
+        coint_pairs_raw = coint_cfg.get('pairs', CointegrationAnalyzer.DEFAULT_PAIRS)
+        coint_pairs = []
+        for p in coint_pairs_raw:
+            if len(p) >= 3:
+                 coint_pairs.append((f"{p[0]}_level", f"{p[1]}_level", p[2], p[3] if len(p) > 3 else ''))
+        return coint_pairs
+
+    def _get_selection_config(self):
+        clustering_cfg = self.config.get('features', {}).get('clustering', {})
+        selection_cfg_dict = clustering_cfg.get('selection', {})
+        if selection_cfg_dict.get('ic_based', {}).get('enabled', False):
+            ic_cfg = selection_cfg_dict.get('ic_based', {})
+            return SelectionConfig(
+                method=SelectionMethod.UNIVARIATE_IC,
+                ic_lag_buffer_months=ic_cfg.get('lag_buffer_months', 24),
+                ic_min_observations=ic_cfg.get('min_observations', 60)
+            )
+        else:
+            method_str = selection_cfg_dict.get('method', 'centroid')
+            return SelectionConfig(method=SelectionMethod(method_str))
+
+    def _pipeline_factory(self, model_instance):
+        coint_cfg = self.config.get('features', {}).get('cointegration', {})
+        clustering_cfg = self.config.get('features', {}).get('clustering', {})
+        return Pipeline([
+            ('cointegration', CointegrationAnalyzer(
+                pairs=self._get_coint_pairs(),
+                validate=coint_cfg.get('validate', True),
+                significance=coint_cfg.get('significance_level', 0.05),
+                min_observations=coint_cfg.get('min_observations', 120),
+                stability_threshold=coint_cfg.get('stability_threshold', 0.70),
+                prior_config=coint_cfg.get('priors', {})
+            )),
+            ('clustering', HierarchicalClusterSelector(
+                similarity_threshold=clustering_cfg.get('similarity_threshold', 0.80),
+                selection_config=self._get_selection_config()
+            )),
+            ('imputer', PointInTimeImputer(strategy='median')),
+            ('scaler', TimeSeriesScaler(method='robust')),
+            ('model', model_instance)
+        ])
+
+    def _create_model(self, model_name):
+        model_config = self.MODEL_CONFIGS.get(model_name)
+        model_type = model_config['type']
+        params = model_config['params']
+        if model_type == 'linear':
+            return create_linear_model(model_name, **params)
+        elif model_type == 'tree':
+            return create_tree_model(model_name, **params)
+        elif model_type == 'neural':
+            return create_neural_model(model_name.replace('_', ''), **params)
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    def run_nested_cv_ensemble_evaluation(self, assets: List[str]):
+        """Run nested CV to get unbiased ensemble estimates."""
+        nested_cfg = self.config.get('ensemble', {}).get('selection', {}).get('nested_cv', {})
+        
+        evaluator = NestedCVEnsembleEvaluator(
+            n_outer_folds=nested_cfg.get('n_outer_folds', 5),
+            n_inner_folds=nested_cfg.get('n_inner_folds', 4),
+            outer_min_train_months=nested_cfg.get('outer_min_train_months', 120),
+            inner_min_train_months=nested_cfg.get('inner_min_train_months', 84),
+            ensemble_size=self.config.get('ensemble', {}).get('size', 5)
+        )
+        
+        for asset in assets:
+            target_key = f'{asset}_return'
+            y = self.targets.get(target_key)
+            if y is None: continue
+            
+            X = self.features
+            
+            # Use aligner to get consistent indices
+            pub_lag = self.config.get('data', {}).get('alfred', {}).get('publication_lag_months', 1)
+            from src.preprocessing.alignment import LaggedAligner
+            aligner = LaggedAligner(lag_months=pub_lag)
+            X_aligned, y_aligned = aligner.align_features_and_targets(X, y.dropna())
+            
+            # If holdout is enabled, we only use the development set for nested CV
+            if self.holdout_enabled:
+                X_dev, y_dev, _, _ = self.holdout_manager.split_data(X_aligned, y_aligned)
+                X_input, y_input = X_dev, y_dev
+            else:
+                X_input, y_input = X_aligned, y_aligned
+            
+            # Exclude ensemble models from factories as they are what we're evaluating
+            model_factories = {
+                name: lambda n=name: self._create_model(n)
+                for name in self.MODEL_CONFIGS.keys()
+                if 'Ensemble' not in name
+            }
+            
+            result = evaluator.evaluate(
+                X_input, y_input,
+                model_factories, self._pipeline_factory,
+                asset=asset
+            )
+            
+            logger.info("\n" + format_nested_cv_report(result))
+            
+            # Save results to a specialized CSV
+            nested_results_path = self.experiments_dir / 'cv_results' / f'nested_cv_{asset}.joblib'
+            joblib.dump(result, nested_results_path)
+
+    def evaluate_holdout(self, assets: List[str], models: List[str]):
+        """
+        Evaluate best models on holdout set.
+        
+        This method is called ONCE, AFTER all model development is complete.
+        """
+        logger.info("=" * 60)
+        logger.info("STEP 3: HOLDOUT EVALUATION (Never-Before-Seen Data)")
+        logger.info("=" * 60)
+        
+        holdout_results = []
+        
+        for asset in assets:
+            # Load the best model (already trained on development set)
+            asset_mask = self.results['asset'] == asset
+            valid_ic_mask = ~self.results['IC_mean'].isna()
+            
+            asset_results = self.results[asset_mask & valid_ic_mask]
+            if asset_results.empty:
+                logger.warning(f"No valid results for {asset}, skipping holdout")
+                continue
+                
+            best_model_row = asset_results.sort_values('IC_mean', ascending=False).iloc[0]
+            
+            model_name = best_model_row['model']
+            model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
+            
+            if not model_path.exists():
+                logger.warning(f"Model not found for {asset}: {model_path}")
+                continue
+            
+            model = joblib.load(model_path)
+            
+            # Get holdout data
+            target_key = f'{asset}_return'
+            y = self.targets.get(target_key)
+            if y is None:
+                continue
+                
+            # Alignment and Holdout Split
+            pub_lag = self.config.get('data', {}).get('alfred', {}).get('publication_lag_months', 1)
+            aligner = LaggedAligner(lag_months=pub_lag)
+            X, y_aligned = aligner.align_features_and_targets(self.features, y.dropna())
+            _, _, X_holdout, y_holdout = self.holdout_manager.split_data(X, y_aligned)
+            
+            if len(y_holdout) == 0:
+                logger.warning(f"No holdout data for {asset}")
+                continue
+
+            # Generate predictions on holdout
+            predictions = model.predict(X_holdout)
+            
+            # Compute metrics
+            from evaluation.inference import compute_ic_with_inference
+            horizon = self.config.get('models', {}).get('targets', {}).get('returns', {}).get('horizon_months', 24)
+            inference = compute_ic_with_inference(
+                y_holdout, 
+                pd.Series(predictions, index=y_holdout.index),
+                horizon=horizon
+            )
+            
+            cv_ic = best_model_row['IC_mean']
+            degradation = (cv_ic - inference.estimate) / cv_ic if cv_ic > 0 else np.nan
+            
+            holdout_results.append({
+                'asset': asset,
+                'model': model_name,
+                'holdout_IC': inference.estimate,
+                'holdout_IC_t_stat': inference.t_stat_nw,
+                'holdout_IC_p_value': inference.p_value_nw,
+                'holdout_IC_significant': inference.p_value_nw < 0.05,
+                'cv_IC': cv_ic,
+                'IC_degradation': degradation,
+                'n_holdout_obs': len(y_holdout),
+                'n_independent_obs': len(y_holdout) // horizon
+            })
+            
+            logger.info(
+                f"{asset:<5} | {model_name:<15} | "
+                f"CV IC: {cv_ic:.3f} → Holdout IC: {inference.estimate:.3f} "
+                f"(p={inference.p_value_nw:.3f}, deg={degradation:.1%})"
+            )
+        
+        if holdout_results:
+            # Save holdout results
+            holdout_df = pd.DataFrame(holdout_results)
+            holdout_df.to_csv(
+                self.experiments_dir / 'cv_results' / 'holdout_results.csv',
+                index=False
+            )
+            self.holdout_results = holdout_df
+            logger.info(f"Holdout results saved to {self.experiments_dir / 'cv_results' / 'holdout_results.csv'}")
+        else:
+            logger.warning("No holdout results generated")
+
+    def _should_skip_lstm(self, X: pd.DataFrame, y: pd.Series, cv_folds: list) -> Tuple[bool, str]:
+        """Determine if LSTM should be skipped using enhanced validation."""
+        lstm_cfg = self.config.get('models', {}).get('neural', {}).get('lstm', {})
+        if not lstm_cfg:
+            return True, "LSTM configuration not found"
+            
+        req = SequenceRequirements(
+            seq_length=lstm_cfg.get('sequence', {}).get('length', 12),
+            stride=lstm_cfg.get('sequence', {}).get('stride', 1),
+            min_total_sequences=lstm_cfg.get('min_requirements', {}).get('min_total_sequences', 50),
+            min_train_sequences=lstm_cfg.get('min_requirements', {}).get('min_train_sequences', 30),
+            min_val_sequences=lstm_cfg.get('min_requirements', {}).get('min_val_sequences', 10),
+            safety_margin_pct=lstm_cfg.get('min_requirements', {}).get('safety_margin_pct', 0.10)
+        )
+        
+        validator = LSTMSequenceValidator(req)
+        
+        # 1. Quick overall check (estimated)
+        overall_result = validator.validate(X, y)
+        if not overall_result.is_valid:
+            return True, overall_result.failure_reason
+            
+        # 2. Detailed per-fold check
+        fold_results = validator.validate_per_fold(X, y, cv_folds)
+        invalid_folds = [f"Fold {i}" for i, r in fold_results.items() if not r['is_valid']]
+        
+        if invalid_folds:
+            return True, f"Insufficient sequences in: {', '.join(invalid_folds)}"
+            
+        return False, None
+
+    def _log_lstm_skip(self, asset: str, reason: str):
+        """Record skipped LSTM for final reporting."""
+        if not hasattr(self, 'lstm_skips'):
+            self.lstm_skips = []
+        self.lstm_skips.append({
+            'asset': asset,
+            'reason': reason,
+            'timestamp': datetime.now()
+        })
     
     def generate_reports(self):
         """Generate summary reports."""
@@ -824,6 +1176,9 @@ def main():
     parser.add_argument('--features-only', action='store_true', help='Only run feature pipeline')
     parser.add_argument('--eval-only', action='store_true', help='Only run evaluation')
     parser.add_argument('--fred-api-key', type=str, default=None, help='FRED API key')
+    parser.add_argument('--no-holdout', action='store_true', help='Disable holdout testing')
+    parser.add_argument('--holdout-start', type=str, default=None, help='Explicit holdout start date (YYYY-MM-DD)')
+    parser.add_argument('--holdout-only', action='store_true', help='Only run holdout evaluation')
     
     args = parser.parse_args()
     
@@ -833,6 +1188,20 @@ def main():
     logger.info("=" * 60)
     
     tournament = ModelTournament()
+    
+    if args.no_holdout:
+        tournament.holdout_enabled = False
+        tournament.holdout_manager = None
+    elif args.holdout_start:
+        tournament.holdout_enabled = True
+        holdout_cfg = tournament.config.get('validation', {}).get('holdout', {})
+        tournament.holdout_manager = HoldoutManager(
+            method='date',
+            holdout_start=args.holdout_start,
+            min_holdout_months=holdout_cfg.get('min_holdout_months', 48),
+            min_independent_obs=holdout_cfg.get('min_independent_obs', 20),
+            forecast_horizon=tournament.config.get('models', {}).get('targets', {}).get('returns', {}).get('horizon_months', 24)
+        )
     
     # Run feature pipeline
     feature_file = tournament.experiments_dir / 'features' / f'features_{datetime.now().strftime("%Y%m%d")}.parquet'
@@ -846,13 +1215,27 @@ def main():
         tournament.features = pd.read_parquet(feature_file)
     
     # If not found and NOT eval-only, run pipeline
-    if tournament.features is None and not args.eval_only:
+    if tournament.features is None and not (args.eval_only or args.holdout_only):
         tournament.run_feature_pipeline(args.fred_api_key)
     
     if args.features_only:
         logger.info("Feature pipeline complete. Exiting.")
         return
-    
+
+    if args.holdout_only:
+        if tournament.features is None:
+            logger.error("Features not available for holdout evaluation. Run feature pipeline first.")
+            return
+        tournament.prepare_targets()
+        # Load existing results to know which models were best
+        results_path = tournament.experiments_dir / 'cv_results' / 'tournament_results.csv'
+        if results_path.exists():
+            tournament.results = pd.read_csv(results_path)
+            tournament.evaluate_holdout(args.assets or tournament.ASSETS, args.models or ['all'])
+        else:
+            logger.error("No tournament results found. Run full tournament first.")
+        return
+
     # Run tournament
     tournament.run_tournament(assets=args.assets, models=args.models)
     

@@ -1,235 +1,107 @@
-"""
-ALFRED Real-Time Validation
-===========================
-Executes historical simulations using point-in-time vintage data.
-"""
-
-import pandas as pd
 import numpy as np
+import pandas as pd
+import json
 import joblib
 import logging
-from typing import List, Dict, Optional
-from scipy.stats import spearmanr
 from pathlib import Path
-import json
-
-from src.preprocessing.alfred_loader import ALFREDVintageLoader
-from src.feature_engineering.frozen_pipeline import FrozenFeaturePipeline
+from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
-class EnsembleWrapper:
-    """
-    Wraps multiple models to provide a single 'predict' interface 
-    for the validation script.
-    """
-    def __init__(self, models):
-        self.models = models
-        
-        # Aggregate features from all constituent models
-        all_features = set()
-        for m in self.models:
-            feats = []
-            if hasattr(m, 'feature_names_in_'):
-                feats = m.feature_names_in_
-            elif hasattr(m, 'feature_names'):
-                feats = m.feature_names
-            elif hasattr(m, 'features'):
-                feats = m.features
-            
-            if hasattr(feats, 'tolist'):
-                all_features.update(feats.tolist())
-            else:
-                all_features.update(feats)
-        
-        self.feature_names_in_ = sorted(list(all_features))
+class NBERRecessionDates:
+    """NBER recession date manager."""
+    OFFICIAL_DATES = [
+        ("1980-01-01", "1980-07-31"), ("1981-07-01", "1982-11-30"),
+        ("1990-07-01", "1991-03-31"), ("2001-03-01", "2001-11-30"),
+        ("2007-12-01", "2009-06-30"), ("2020-02-01", "2020-04-30"),
+    ]
+    def __init__(self, custom_dates=None):
+        dates = custom_dates or self.OFFICIAL_DATES
+        self.recession_periods = [(pd.Timestamp(s), pd.Timestamp(e)) for s, e in dates]
+    def is_recession(self, date):
+        for s, e in self.recession_periods:
+            if s <= date <= e: return True
+        return False
+    def get_regime_labels(self, dates):
+        return pd.Series(['recession' if self.is_recession(d) else 'expansion' for d in dates], index=dates)
 
-    def predict(self, X):
-        """
-        Runs prediction on all constituent models and returns the average.
-        """
-        preds = []
-        for model in self.models:
-            # Handle both Series and Array returns
-            p = model.predict(X)
-            if hasattr(p, 'values'):
-                p = p.values
-            preds.append(p)
-        
-        # Average
-        return np.mean(preds, axis=0)
+from models.ensemble import EnsembleModel
 
 class ALFREDValidator:
-    """
-    Core engine for running historical simulation loops using ALFRED vintages.
-    """
-    def __init__(self, 
-                 model_path: str, 
-                 validation_dates: List[pd.Timestamp],
-                 vintages_dir: str = "data/raw/vintages",
-                 transform_codes_path: str = "data/raw/fred_md_transforms.csv"):
-        """
-        Args:
-            model_path: Path to the .pkl or .json file of the trained model.
-            validation_dates: List of semi-annual dates for simulation.
-            vintages_dir: Directory containing vintage CSVs.
-            transform_codes_path: Path to FRED-MD transformation codes.
-        """
+    """Core engine for running historical simulation loops using ALFRED vintages."""
+    def __init__(self, model_path, validation_dates, vintages_dir="data/raw/vintages", transform_codes_path="data/raw/fred_md_transforms.csv"):
+        # ... (keep existing init code) ...
         model_p = Path(model_path)
         if model_p.suffix == '.json':
-            logger.info(f"Detected Ensemble Manifest: {model_p.name}")
-            with open(model_p, 'r') as f:
-                manifest = json.load(f)
-            
+            with open(model_p, 'r') as f: manifest = json.load(f)
             constituent_names = manifest['models']
             loaded_models = []
-            
-            # Assumes models are in the same directory or standard models directory
             models_dir = model_p.parent
-            
-            # Parse asset from filename (e.g., GOLD_Ensemble_Top5.json)
             asset = model_p.stem.split('_')[0]
-            
             for m_name in constituent_names:
-                c_path = models_dir / f"{asset}_{m_name}.pkl"
-                if not c_path.exists():
-                     raise FileNotFoundError(f"Ensemble constituent missing: {c_path}")
+                c_path = models_dir / f"{asset}_{m_name}.joblib"
+                if not c_path.exists(): 
+                   # Fallback to .pkl
+                   c_path = models_dir / f"{asset}_{m_name}.pkl"
+                if not c_path.exists(): raise FileNotFoundError(f"Ensemble constituent missing: {c_path}")
                 loaded_models.append(joblib.load(c_path))
-                
-            self.model = EnsembleWrapper(loaded_models)
-            logger.info(f"Successfully loaded Ensemble with {len(loaded_models)} models")
+            self.model = EnsembleModel(loaded_models)
         else:
             self.model = joblib.load(model_path)
         
-        # Identify features needed by the model
-        # Identify features needed by the model
-        if hasattr(self.model, 'feature_names_in_'):
-            self.features_needed = self.model.feature_names_in_
-        elif hasattr(self.model, 'feature_names'):
-            self.features_needed = self.model.feature_names
-        elif hasattr(self.model, 'features'):
-            self.features_needed = self.model.features
-        # Handle Pipeline explicitly if standard attributes are missing
+        if hasattr(self.model, 'feature_names_in_'): self.features_needed = self.model.feature_names_in_
+        elif hasattr(self.model, 'feature_names'): self.features_needed = self.model.feature_names
+        elif hasattr(self.model, 'features'): self.features_needed = self.model.features
         elif hasattr(self.model, 'steps'):
-            # Try to get features from the first step (transformer) or last step (estimator)
             try:
-                # Often the first step knows the input features if it was fitted
-                if hasattr(self.model.steps[0][1], 'feature_names_in_'):
-                    self.features_needed = self.model.steps[0][1].feature_names_in_
-                # Or check if any step has it
-                elif hasattr(self.model.steps[-1][1], 'feature_names_in_'):
-                     self.features_needed = self.model.steps[-1][1].feature_names_in_
-                else:
-                    raise AttributeError("Could not find feature_names_in_ in pipeline steps")
-            except Exception as e:
-                raise AttributeError(f"Failed to extract features from Pipeline: {e}")
-        else:
-            raise AttributeError("Model does not have 'feature_names_in_', 'feature_names', or 'features' attribute.")
-            
-        # Convert to list if it's a numpy array
-        if hasattr(self.features_needed, 'tolist'):
-            self.features_needed = self.features_needed.tolist()
-            
-        self.loader = ALFREDVintageLoader(vintages_dir)
+                if hasattr(self.model.steps[0][1], 'feature_names_in_'): self.features_needed = self.model.steps[0][1].feature_names_in_
+                elif hasattr(self.model.steps[-1][1], 'feature_names_in_'): self.features_needed = self.model.steps[-1][1].feature_names_in_
+                else: raise AttributeError("Could not find feature_names_in_ in pipeline steps")
+            except Exception as e: raise AttributeError(f"Failed to extract features from Pipeline: {e}")
+        else: raise AttributeError("Model features missing.")
         
-        # Load transform codes
+        if hasattr(self.features_needed, 'tolist'): self.features_needed = self.features_needed.tolist()
+        self.loader = ALFREDVintageLoader(vintages_dir)
         self.transform_codes = {}
         if Path(transform_codes_path).exists():
             t_df = pd.read_csv(transform_codes_path)
             for col in t_df.columns:
-                try:
-                    self.transform_codes[col] = int(t_df.iloc[0][col])
-                except:
-                    self.transform_codes[col] = 1
-        elif validation_dates:
-            # Try to get from the first vintage
-            self.transform_codes = self.loader.get_transform_codes(validation_dates[0])
-                    
+                try: self.transform_codes[col] = int(t_df.iloc[0][col])
+                except: self.transform_codes[col] = 1
+        elif validation_dates: self.transform_codes = self.loader.get_transform_codes(validation_dates[0])
         self.pipeline = FrozenFeaturePipeline(self.features_needed, self.transform_codes)
         self.validation_dates = sorted(validation_dates)
+        self.nber = NBERRecessionDates()
 
     def run_validation(self, true_returns: pd.Series) -> pd.DataFrame:
-        """
-        Execute the historical simulation loop.
-        
-        Args:
-            true_returns: Series of realized returns (target variable) to compare against.
-            
-        Returns:
-            DataFrame with [Date, Forecast_RealTime, Realized_Later]
-        """
         results = []
-        
         for t in self.validation_dates:
-            logger.info(f"Simulating point-in-time for: {t.strftime('%Y-%m-%d')}")
-            
             try:
-                # 1. Load Vintage(t)
                 vintage_df = self.loader.load_vintage(t)
-                
-                # 2. Generate features X_t (using FrozenPipeline)
                 X_t = self.pipeline.transform_vintage(vintage_df)
-                
-                # We need the most recent observation in the vintage for prediction
-                # Usually the last row in X_t
                 X_latest = X_t.tail(1)
-                
-                # 3. Predict Y_{t+h} (Forecast)
                 prediction_result = self.model.predict(X_latest)
-                if hasattr(prediction_result, 'iloc'):
-                    forecast = prediction_result.iloc[0]
-                else:
-                    forecast = prediction_result[0]
-                
-                # 4. Get realized return (from true_returns)
-                realized = np.nan
-                if t in true_returns.index:
-                    realized = true_returns.loc[t]
-                
-                results.append({
-                    'Date': t,
-                    'Forecast_RealTime': forecast,
-                    'Realized_Return': realized
-                })
-                
-            except Exception as e:
-                logger.error(f"Error validating date {t}: {e}")
-                
+                forecast = prediction_result.iloc[0] if hasattr(prediction_result, 'iloc') else prediction_result[0]
+                results.append({'Date': t, 'Forecast_RealTime': forecast, 'Realized_Return': true_returns.loc[t] if t in true_returns.index else np.nan})
+            except Exception as e: logger.error(f"Error {t}: {e}")
         return pd.DataFrame(results)
 
     def compute_metrics(self, validation_results: pd.DataFrame, revised_ic: float) -> Dict:
-        """
-        Compute Revision Risk metrics.
+        clean = validation_results.dropna(subset=['Realized_Return'])
+        if len(clean) < 2: return {'RealTime_IC': 0.0, 'Revision_Risk': 1.0, 'Status': 'Insufficient Data'}
         
-        Args:
-            validation_results: Output from run_validation.
-            revised_ic: The IC achieved during the Discovery Phase (on revised data).
-            
-        Returns:
-            Dictionary with Real-Time IC, Revision Risk, etc.
-        """
-        # Remove NaNs
-        clean_results = validation_results.dropna(subset=['Realized_Return'])
+        rt_ic, _ = spearmanr(clean['Forecast_RealTime'], clean['Realized_Return'])
+        rev_risk = (revised_ic - rt_ic) / revised_ic if abs(revised_ic) > 1e-6 else 0.0
         
-        if len(clean_results) < 2:
-            return {
-                'RealTime_IC': 0.0,
-                'Revision_Risk': 1.0,
-                'Status': 'Insufficient Data'
-            }
-            
-        # 1. Real-Time IC
-        rt_ic, _ = spearmanr(clean_results['Forecast_RealTime'], clean_results['Realized_Return'])
+        # Regime-Conditional Analysis
+        labels = self.nber.get_regime_labels(clean['Date'])
+        recessions = clean[labels == 'recession']
+        expansions = clean[labels == 'expansion']
         
-        # 2. Revision Risk
-        # (IC_Revised - IC_RealTime) / IC_Revised
-        rev_risk = 0.0
-        if abs(revised_ic) > 1e-6:
-            rev_risk = (revised_ic - rt_ic) / revised_ic
-            
+        rec_ic = spearmanr(recessions['Forecast_RealTime'], recessions['Realized_Return'])[0] if len(recessions) >= 5 else np.nan
+        exp_ic = spearmanr(expansions['Forecast_RealTime'], expansions['Realized_Return'])[0] if len(expansions) >= 5 else np.nan
+        
         return {
-            'RealTime_IC': rt_ic,
-            'Revised_IC': revised_ic,
-            'Revision_Risk': rev_risk,
-            'Sample_Size': len(clean_results)
+            'RealTime_IC': rt_ic, 'Revised_IC': revised_ic, 'Revision_Risk': rev_risk,
+            'Recession_IC': rec_ic, 'Expansion_IC': exp_ic, 'Sample_Size': len(clean)
         }

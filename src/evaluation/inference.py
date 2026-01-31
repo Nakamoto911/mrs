@@ -12,6 +12,7 @@ from scipy.stats import spearmanr, t as t_dist
 from typing import Tuple, Optional, Dict
 from dataclasses import dataclass
 import logging
+from .effective_sample_size import EffectiveSampleSizeEstimator
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class InferenceResult:
     p_value_nw: float        # Two-sided p-value using NW SE
     ci_lower: float          # 95% CI lower bound
     ci_upper: float          # 95% CI upper bound
-    effective_n: int         # Effective sample size estimate
+    effective_n: float       # Effective sample size estimate
     n_obs: int               # Actual number of observations
     horizon: int             # Forecast horizon (months)
     method: str              # Primary method used
@@ -318,6 +319,23 @@ def compute_ic_with_inference(
     # Naive SE (assuming independence - WRONG but included for comparison)
     se_raw = np.sqrt((1 - ic**2) / (n - 2)) if n > 2 else np.nan
     
+    # Compute residuals for ESS estimation
+    # For IC, residuals are standardized ranks
+    rank_true = stats.rankdata(y_true_clean)
+    rank_pred = stats.rankdata(y_pred_clean)
+    rank_true = (rank_true - rank_true.mean()) / rank_true.std()
+    rank_pred = (rank_pred - rank_pred.mean()) / rank_pred.std()
+    residuals = rank_true * rank_pred
+    
+    # Estimate effective sample size using configured method
+    ess_estimator = EffectiveSampleSizeEstimator(
+        method=method if method != 'bootstrap' else 'newey_west',
+        horizon=horizon
+    )
+    ess_result = ess_estimator.estimate(residuals=residuals)
+    effective_n = ess_result.n_effective
+    df = max(1.0, effective_n - 2)
+
     # If sample size is too small for robust inference, skip complex SEs
     if n <= horizon:
         logger.debug(f"Sample size ({n}) <= horizon ({horizon}). Skipping robust SE calculation.")
@@ -348,15 +366,11 @@ def compute_ic_with_inference(
                 estimate=ic, se_raw=se_raw, se_nw=np.nan, se_hh=np.nan,
                 t_stat_nw=np.nan, p_value_nw=np.nan,
                 ci_lower=ci_lower, ci_upper=ci_upper,
-                effective_n=compute_effective_sample_size(n, horizon),
+                effective_n=effective_n,
                 n_obs=n, horizon=horizon, method=method
             )
         else:
             raise ValueError(f"Unknown method: {method}")
-    
-    # Effective sample size
-    effective_n = compute_effective_sample_size(n, horizon)
-    df = max(1, effective_n - 2)
     
     # T-statistic and p-value (using Newey-West as default)
     if se_nw > 0:

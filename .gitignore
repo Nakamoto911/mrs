@@ -18,6 +18,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
+logs/
 .gitattributes
 .gitmodules
 
@@ -43,7 +44,7 @@ batch_validation_summary.csv
 # Data
 data/raw/vintages/
 data/fred_md/
-{data/
+data/
 *.parquet
 *.joblib
 

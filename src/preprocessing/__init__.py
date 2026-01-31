@@ -25,6 +25,9 @@ from .transformations import (
     standardize_features
 )
 
+from .scaling import TimeSeriesScaler
+from .imputation import PointInTimeImputer
+
 __all__ = [
     'FREDMDLoader',
     'AssetPriceLoader', 
@@ -36,5 +39,7 @@ __all__ = [
     'FREDMDTransformer',
     'CustomTransformer',
     'standardize_features',
-    'LaggedAligner'
+    'LaggedAligner',
+    'TimeSeriesScaler',
+    'PointInTimeImputer'
 ]

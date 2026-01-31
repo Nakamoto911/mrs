@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any
 import logging
 from sklearn.impute import SimpleImputer
 from sklearn.base import BaseEstimator
+from preprocessing import PointInTimeImputer
 
 logger = logging.getLogger(__name__)
 
@@ -129,22 +130,22 @@ class TreeModelWrapper(BaseEstimator):
         self.feature_names_ = [c for c in X_sync.columns if c not in all_nan_features]
         X_filtered = X_sync[self.feature_names_]
         
-        # 3. Strict Rolling Imputation (No Look-ahead)
-        # 1. Compute rolling stats (shifted by 1)
-        rolling_medians = X_filtered.expanding(min_periods=1).median().shift(1)
-        
-        # 2. Impute with rolling medians, then 0.0 as final fallback
-        X_imputed = X_filtered.fillna(rolling_medians).fillna(0.0)
-        
-        # 3. Store strict PIT medians for Inference usage (final state of the rolling window)
-        self.fill_values_ = X_filtered.median().fillna(0.0)
+        # 3. Point-in-Time Imputation
+        self.imputer_ = PointInTimeImputer(strategy='median')
+        X_imputed = self.imputer_.transform_expanding(X_filtered)
         
         if len(X_imputed) < 20:
             raise ValueError(f"Insufficient data for fitting: {len(X_imputed)}")
         
         # Create and fit model
         self.model_ = self._create_model()
-        self.model_.fit(X_imputed, y_sync)
+        
+        # Final safety check: ensure no NaNs and align
+        final_mask = ~(X_imputed.isna().any(axis=1) | y_sync.isna())
+        if final_mask.sum() < 20:
+            raise ValueError(f"Insufficient valid data after imputation (N={final_mask.sum()})")
+            
+        self.model_.fit(X_imputed[final_mask], y_sync[final_mask])
         
         self.fitted_ = True
         return self
@@ -166,7 +167,7 @@ class TreeModelWrapper(BaseEstimator):
         X_filtered = X[self.feature_names_]
         
         # Impute
-        X_filled = X_filtered.fillna(self.fill_values_)
+        X_filled = self.imputer_.transform(X_filtered)
         
         predictions = self.model_.predict(X_filled)
         
