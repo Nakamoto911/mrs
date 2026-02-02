@@ -73,6 +73,10 @@ from evaluation.multiple_testing import (
     HypothesisTest,
     format_mtc_report
 )
+
+# Parallelization
+from joblib import Parallel, delayed
+
 from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from sklearn.linear_model import Ridge
@@ -113,6 +117,137 @@ warnings.filterwarnings('ignore', category=ConvergenceWarning, module='sklearn')
 logging.getLogger('shap').setLevel(logging.WARNING)
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
+# -----------------------------------------------------------------------------
+# Standalone Helper Functions for Parallelization
+# -----------------------------------------------------------------------------
+
+def create_model_from_config(model_name: str, model_config: dict):
+    """
+    Create a model instance from configuration.
+    Standalone function to be pickle-safe for joblib.
+    """
+    model_type = model_config['type']
+    params = model_config['params']
+    
+    if model_type == 'linear':
+        return create_linear_model(model_name, **params)
+    elif model_type == 'tree':
+        return create_tree_model(model_name, **params)
+    elif model_type == 'neural':
+        return create_neural_model(model_name.replace('_', ''), **params)
+    raise ValueError(f"Unknown model type: {model_type}")
+
+def create_pipeline_for_model(model_instance, coint_pairs, coint_cfg, clustering_cfg):
+    """
+    Create the feature engineering pipeline.
+    Standalone function to be pickle-safe.
+    """
+    return Pipeline([
+        ('cointegration', CointegrationAnalyzer(
+            pairs=coint_pairs,
+            validate=coint_cfg.get('validate', True),
+            significance=coint_cfg.get('significance_level', 0.05),
+            min_observations=coint_cfg.get('min_observations', 120),
+            stability_threshold=coint_cfg.get('stability_threshold', 0.70),
+            prior_config=coint_cfg.get('priors', {})
+        )),
+        ('clustering', HierarchicalClusterSelector(
+            similarity_threshold=clustering_cfg.get('similarity_threshold', 0.80),
+            selection_config=get_selection_config_from_dict(clustering_cfg)
+        )),
+        ('imputer', PointInTimeImputer(strategy='median')),
+        ('scaler', TimeSeriesScaler(method='robust')),
+        ('model', model_instance)
+    ])
+
+def get_selection_config_from_dict(clustering_cfg):
+    """Helper to reconstruct SelectionConfig"""
+    selection_cfg_dict = clustering_cfg.get('selection', {})
+    if selection_cfg_dict.get('ic_based', {}).get('enabled', False):
+        ic_cfg = selection_cfg_dict.get('ic_based', {})
+        return SelectionConfig(
+            method=SelectionMethod.UNIVARIATE_IC,
+            ic_lag_buffer_months=ic_cfg.get('lag_buffer_months', 24),
+            ic_min_observations=ic_cfg.get('min_observations', 60)
+        )
+    else:
+        method_str = selection_cfg_dict.get('method', 'centroid')
+        return SelectionConfig(method=SelectionMethod(method_str))
+
+def process_single_model(
+    model_name, 
+    asset, 
+    X_train, 
+    y_train, 
+    validator, 
+    experiments_dir, 
+    model_config,
+    coint_pairs,
+    coint_cfg,
+    clustering_cfg,
+    lstm_skip_check=None
+):
+    """
+    Worker function to process a single model.
+    """
+    # Gating logic for LSTM
+    if lstm_skip_check:
+        should_skip, reason = lstm_skip_check(X_train, y_train)
+        if should_skip:
+            return {
+                'status': 'skipped',
+                'asset': asset,
+                'model': model_name,
+                'reason': reason
+            }
+
+    start = time.time()
+    try:
+        # Create model and pipeline
+        model_instance = create_model_from_config(model_name, model_config)
+        pipeline = create_pipeline_for_model(model_instance, coint_pairs, coint_cfg, clustering_cfg)
+        
+        # Cross-validation
+        result = validator.evaluate(
+            pipeline,
+            X_train, y_train,
+            model_name=model_name,
+            asset=asset,
+            target='return'
+        )
+        elapsed = time.time() - start
+        
+        # Prepare metrics
+        metrics = {
+            'IC_mean': result.metrics.get('IC_mean', np.nan),
+            'IC_std': result.metrics.get('IC_std', np.nan),
+            'IC_t_stat': result.metrics.get('IC_t_stat_mean', np.nan),
+            'IC_p_value': result.metrics.get('IC_p_value_mean', np.nan),
+            'IC_significant': result.metrics.get('IC_significant_mean', 0) > 0.5,
+            'RMSE_mean': result.metrics.get('RMSE_mean', np.nan),
+            'hit_rate_mean': result.metrics.get('hit_rate_mean', np.nan),
+            'n_folds': result.n_folds,
+            'time_seconds': elapsed
+        }
+        
+        # Return complex objects separately
+        return {
+            'status': 'success',
+            'asset': asset,
+            'model': model_name,
+            'metrics': metrics,
+            'predictions': result.predictions,
+            'fold_metadata': result.fold_metadata if hasattr(result, 'fold_metadata') else None,
+            'pipeline': None 
+        }
+        
+    except Exception as e:
+        return {
+            'status': 'error',
+            'asset': asset,
+            'model': model_name,
+            'error': str(e)
+        }
 
 class ModelTournament:
     """
@@ -370,24 +505,16 @@ class ModelTournament:
         Returns:
             Trained model
         """
-        config = self.MODEL_CONFIGS.get(model_name)
-        if config is None:
+        # Delegate to the standalone function
+        model_config = self.MODEL_CONFIGS.get(model_name)
+        if model_config is None:
             raise ValueError(f"Unknown model: {model_name}")
-        
-        model_type = config['type']
-        params = config['params']
-        
-        if model_type == 'linear':
-            model = create_linear_model(model_name, **params)
-        elif model_type == 'tree':
-            model = create_tree_model(model_name, **params)
-        elif model_type == 'neural':
-            model = create_neural_model(model_name.replace('_', ''), **params)
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
-        
+            
+        model = create_model_from_config(model_name, model_config)
         model.fit(X, y)
         return model
+
+
     
     def run_tournament(self, assets: List[str] = None, models: List[str] = None):
         """
@@ -466,120 +593,152 @@ class ModelTournament:
             # Track fold metadata for cointegration report (shared across models)
             latest_fold_metadata = None
 
+            # Prepare Parallel Tasks
+            tasks = []
+            coint_cfg = self.config.get('features', {}).get('cointegration', {})
+            clustering_cfg = self.config.get('features', {}).get('clustering', {})
+            coint_pairs = self._get_coint_pairs()
+            
             for model_name in models:
-                # Check if model is enabled in config
                 if not self._is_model_enabled(model_name):
                     logger.info(f"  Skipping {model_name} (disabled in config)")
                     continue
-
-                result = None
-                # Gating logic for LSTM
+                    
+                # Prepare LSTM skip check closure
+                lstm_check = None
                 if 'lstm' in model_name:
-                    cv_folds = list(validator.cv.split(X_train))
-                    should_skip, reason = self._should_skip_lstm(X_train, y_train, cv_folds)
-                    if should_skip:
-                        logger.warning(f"  Skipping {model_name} for {asset}: {reason}")
-                        self._log_lstm_skip(asset, reason)
-                        continue
+                    # We need to capture cv_folds logic here or pass it into the function
+                    # The original used validator.cv.split(X_train)
+                    # We'll pass a partial or a simpler check. 
+                    # To keep it picklable, we pass the method reference bound to self is risky? 
+                    # Better to pass the config and re-instantiate validation logic or pre-calculate.
+                    # Actually, pre-calculating CV folds validation is fast.
+                    cv_folds_list = list(validator.cv.split(X_train))
+                    def check_lstm(X, y, folds=cv_folds_list):
+                        return self._should_skip_lstm(X, y, folds)
+                    lstm_check = check_lstm
 
-                logger.info(f"  Training {model_name}...")
-                start = time.time()
-                try:
-                    # Train model
-                    model_instance = self._create_model(model_name)
-                    pipeline = self._pipeline_factory(model_instance)
-                    
-                    # Cross-validation
-                    result = validator.evaluate(
-                        pipeline,
-                        X_train, y_train,
-                        model_name=model_name,
-                        asset=asset,
-                        target='return'
-                    )
-                    elapsed = time.time() - start
-                    ic = result.metrics.get('IC_mean', np.nan)
-                    t_stat = result.metrics.get('IC_t_stat_mean', np.nan)
-                    p_val = result.metrics.get('IC_p_value_mean', np.nan)
-                    sig = '*' if p_val < 0.05 else ''
-                    
-                    logger.info(f"    IC: {ic:.3f} (t={t_stat:.2f}, p={p_val:.3f}{sig})")
-                    
-                    # Benchmark the result
-                    benchmark = benchmark_model(
-                        ic=ic,
-                        ic_t_stat=t_stat,
-                        ic_p_value=p_val,
-                        asset=asset,
-                        ic_std=result.metrics.get('IC_std', None)
-                    )
-                    
-                    # Log warnings
-                    if benchmark.warnings:
-                        logger.warning(f"    Benchmark warnings for {asset}/{model_name}:")
-                        for w in benchmark.warnings:
-                            logger.warning(f"      - {w}")
-
-                    # Store results
-                    results.append({
-                        'asset': asset,
-                        'model': model_name,
-                        'IC_mean': result.metrics.get('IC_mean', np.nan),
-                        'IC_std': result.metrics.get('IC_std', np.nan),
-                        'IC_t_stat': result.metrics.get('IC_t_stat_mean', np.nan),
-                        'IC_p_value': result.metrics.get('IC_p_value_mean', np.nan),
-                        'IC_significant': result.metrics.get('IC_significant_mean', 0) > 0.5,
-                        'IC_rating': benchmark.rating,
-                        'IC_suspicious': benchmark.is_suspicious,
-                        'implied_sharpe': benchmark.implied_sharpe,
-                        'RMSE_mean': result.metrics.get('RMSE_mean', np.nan),
-                        'hit_rate_mean': result.metrics.get('hit_rate_mean', np.nan),
-                        'n_folds': result.n_folds,
-                        'time_seconds': elapsed
-                    })
-
-                    # Logic: Save OOS Predictions
-                    if result.predictions is not None:
-                        # File naming convention: {Asset}_{ModelName}_preds.csv
-                        pred_path = self.experiments_dir / 'predictions' / f'{asset}_{model_name}_preds.csv'
-                        preds_to_save = result.predictions.copy()
-                        # Ensure no NaN indices (can cause Join issues later)
-                        if preds_to_save.index.isna().any():
-                            preds_to_save = preds_to_save.loc[preds_to_save.index.notna()]
-                        preds_to_save.index.name = 'date'
-                        preds_to_save.to_csv(pred_path)
-                    
-                    # Save model (save the full pipeline)
-                    # We must fit the pipeline on the full dataset before saving
-                    logger.info(f"    Refitting {model_name} on development history for persistence...")
-                    pipeline.fit(X_train, y_train)
-                    
-                    # Save model (using .joblib to avoid permission issues with .pkl)
-                    model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
-                    try:
-                        joblib.dump(pipeline, model_path)
-                    except Exception as e:
-                        logger.error(f"    Failed to save model {model_name}: {e}")
-                    
-                    # Store results ONLY after successful save if we want to be strict,
-                    # but here we want the IC even if save fails, so we just wrap the dump.
-                except Exception as e:
-                    logger.error(f"    Error training {model_name}: {e}")
-                    # Only append failure if success wasn't already appended
-                    already_appended = any(r['asset'] == asset and r['model'] == model_name and not np.isnan(r.get('IC_mean', np.nan)) for r in results)
-                    if not already_appended:
-                        results.append({
-                            'asset': asset,
-                            'model': model_name,
-                            'IC_mean': np.nan,
-                            'error': str(e)
-                        })
+                model_config = self.MODEL_CONFIGS.get(model_name)
                 
-                
-                # Capture fold metadata for reporting
-                if result is not None and hasattr(result, 'fold_metadata') and result.fold_metadata:
-                    latest_fold_metadata = result.fold_metadata
+                tasks.append(
+                    delayed(process_single_model)(
+                        model_name, asset, X_train, y_train, validator, 
+                        self.experiments_dir, model_config,
+                        coint_pairs, coint_cfg, clustering_cfg,
+                        lstm_check
+                    )
+                )
+
+            logger.info(f"  Parallelizing {len(tasks)} model training tasks...")
+            parallel_results = Parallel(n_jobs=-1)(tasks)
             
+            # Process Results
+            for res in parallel_results:
+                model_name = res['model']
+                model_config = self.MODEL_CONFIGS.get(model_name)
+                
+                if res['status'] == 'skipped':
+                    logger.warning(f"  Skipping {model_name} for {asset}: {res['reason']}")
+                    self._log_lstm_skip(asset, res['reason'])
+                    continue
+                    
+                if res['status'] == 'error':
+                    logger.error(f"    Error training {model_name}: {res['error']}")
+                    results.append({
+                        'asset': asset, 
+                        'model': model_name, 
+                        'IC_mean': np.nan, 
+                        'error': res['error']
+                    })
+                    continue
+                    
+                # Success
+                metrics = res['metrics']
+                ic = metrics['IC_mean']
+                t_stat = metrics['IC_t_stat']
+                p_val = metrics['IC_p_value']
+                sig = '*' if p_val < 0.05 else ''
+                
+                logger.info(f"    {model_name}: IC: {ic:.3f} (t={t_stat:.2f}, p={p_val:.3f}{sig})")
+
+                # Validate Benchmark
+                benchmark = benchmark_model(
+                    ic=ic, ic_t_stat=t_stat, ic_p_value=p_val, asset=asset, ic_std=metrics['IC_std']
+                )
+                
+                metrics.update({
+                    'asset': asset,
+                    'model': model_name,
+                    'IC_rating': benchmark.rating,
+                    'IC_suspicious': benchmark.is_suspicious,
+                    'implied_sharpe': benchmark.implied_sharpe,
+                })
+                
+                if benchmark.warnings:
+                    logger.warning(f"    Benchmark warnings for {asset}/{model_name}:")
+                    for w in benchmark.warnings:
+                        logger.warning(f"      - {w}")
+
+                results.append(metrics)
+                
+                # Save Predictions
+                if res.get('predictions') is not None:
+                     # File naming convention: {Asset}_{ModelName}_preds.csv
+                    pred_path = self.experiments_dir / 'predictions' / f'{asset}_{model_name}_preds.csv'
+                    preds_to_save = res['predictions'].copy()
+                    if preds_to_save.index.isna().any():
+                        preds_to_save = preds_to_save.loc[preds_to_save.index.notna()]
+                    preds_to_save.index.name = 'date'
+                    preds_to_save.to_csv(pred_path)
+                
+                # Save Model (Re-fit for persistence)
+                # Note: We are doing this sequentially now to avoid pickling the pipeline back from worker
+                # Alternatively, we could have done this in worker. 
+                # For now, let's keep it here but it effectively means re-training.
+                # WAIT: The original code re-fit the pipeline. "refit... for persistence".
+                # Doing this sequentially kills the parallel benefit if re-training is slow.
+                # Ideally, the worker should do the refit and save the file.
+                # But the worker returned `pipeline: None` in my definition above.
+                
+                # Let's CHANGE strategy: Move strict refit/save to worker.
+                # But the worker needs to know where to save. It has experiments_dir.
+                # So I should update `process_single_model` to save the model.
+                
+                # Refitting here for now to ensure correctness with existing logic flow, 
+                # but acknowledging it's suboptimal. 
+                # Actually, for complex models, refitting IS expensive.
+                # I should really do it in the worker. 
+                
+                # ... Let's update `process_single_model` in the Plan/Code?
+                # The chunk I wrote for `process_single_model` earlier did NOT include saving.
+                # I will stick to the plan of "Parallelize the inner loop" first. 
+                # If I see it is slow, I will move saving to worker.
+                # Actually, `pipeline.fit` is called in worker during `validator.evaluate` (internally for each fold).
+                # But `validator.evaluate` does NOT return a fitted pipeline on the whole dataset.
+                # So we MUST refit on the whole dataset (`X_train`) to save the final artifact.
+                # So `process_single_model` SHOULD do this refit and save.
+                
+                # I will add the refit/save to `process_single_model` in a subsequent step or modifying this call.
+                # For now, let's keep it sequential here to minimize massive code drift in one shot, 
+                # the USER asked to parallelize the *training* (validation loop).
+                # The final fit is one more training. 
+                
+                logger.info(f"    Refitting {model_name} on development history for persistence (sequential)...")
+                # We need to recreate the pipeline to fit it
+                model_instance = create_model_from_config(model_name, model_config)
+                pipeline = create_pipeline_for_model(model_instance, coint_pairs, coint_cfg, clustering_cfg)
+                pipeline.fit(X_train, y_train)
+                
+                model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
+                try:
+                    joblib.dump(pipeline, model_path)
+                except Exception as e:
+                    logger.error(f"    Failed to save model {model_name}: {e}")
+
+                # Capture fold metadata
+                if res.get('fold_metadata'):
+                    latest_fold_metadata = res['fold_metadata']
+        
             # LOG COINTEGRATION VALIDATION REPORT (Once per asset)
             if latest_fold_metadata:
                 fold0_meta = latest_fold_metadata[0]
@@ -878,35 +1037,13 @@ class ModelTournament:
     def _pipeline_factory(self, model_instance):
         coint_cfg = self.config.get('features', {}).get('cointegration', {})
         clustering_cfg = self.config.get('features', {}).get('clustering', {})
-        return Pipeline([
-            ('cointegration', CointegrationAnalyzer(
-                pairs=self._get_coint_pairs(),
-                validate=coint_cfg.get('validate', True),
-                significance=coint_cfg.get('significance_level', 0.05),
-                min_observations=coint_cfg.get('min_observations', 120),
-                stability_threshold=coint_cfg.get('stability_threshold', 0.70),
-                prior_config=coint_cfg.get('priors', {})
-            )),
-            ('clustering', HierarchicalClusterSelector(
-                similarity_threshold=clustering_cfg.get('similarity_threshold', 0.80),
-                selection_config=self._get_selection_config()
-            )),
-            ('imputer', PointInTimeImputer(strategy='median')),
-            ('scaler', TimeSeriesScaler(method='robust')),
-            ('model', model_instance)
-        ])
+        # Delegate to standalone
+        return create_pipeline_for_model(model_instance, self._get_coint_pairs(), coint_cfg, clustering_cfg)
 
     def _create_model(self, model_name):
         model_config = self.MODEL_CONFIGS.get(model_name)
-        model_type = model_config['type']
-        params = model_config['params']
-        if model_type == 'linear':
-            return create_linear_model(model_name, **params)
-        elif model_type == 'tree':
-            return create_tree_model(model_name, **params)
-        elif model_type == 'neural':
-            return create_neural_model(model_name.replace('_', ''), **params)
-        raise ValueError(f"Unknown model type: {model_type}")
+        # Delegate to standalone
+        return create_model_from_config(model_name, model_config)
 
     def run_nested_cv_ensemble_evaluation(self, assets: List[str]):
         """Run nested CV to get unbiased ensemble estimates."""
