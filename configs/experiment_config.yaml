@@ -243,13 +243,13 @@ models:
       subsample_range: [0.6, 1.0]
       colsample_bytree_range: [0.6, 1.0]
     lightgbm:
-      enabled: true
+      enabled: false
       learning_rate_range: [0.01, 0.3]
       max_depth_range: [3, 12]
       n_estimators_range: [100, 500]
       num_leaves_range: [20, 100]
     catboost:
-      enabled: true
+      enabled: false
       learning_rate_range: [0.01, 0.3]
       depth_range: [4, 10]
       iterations_range: [100, 500]
@@ -257,13 +257,13 @@ models:
   # Neural networks
   neural:
     mlp:
-      enabled: true
+      enabled: false
       hidden_layers_range: [1, 3]
       hidden_units_range: [32, 256]
       dropout_range: [0.1, 0.5]
       learning_rate_range: [0.0001, 0.01]
     lstm:
-      enabled: true
+      enabled: false
       sequence:
         length: 12  # Months per sequence
         stride: 1   # Step between sequences (1 = full overlap)

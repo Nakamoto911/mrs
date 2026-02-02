@@ -181,6 +181,19 @@ class ModelTournament:
                 return yaml.safe_load(f)
         return {}
     
+    def _is_model_enabled(self, model_name: str) -> bool:
+        """Check if a model is enabled in the configuration."""
+        model_cfg = self.config.get('models', {})
+        
+        # Check in different categories
+        for category in ['linear', 'tree', 'neural']:
+            category_cfg = model_cfg.get(category, {})
+            if model_name in category_cfg:
+                return category_cfg[model_name].get('enabled', True)
+        
+        # Default to True if not explicitly disabled in config
+        return True
+    
     def _setup_directories(self):
         """Create necessary directories."""
         self.experiments_dir.mkdir(parents=True, exist_ok=True)
@@ -454,6 +467,11 @@ class ModelTournament:
             latest_fold_metadata = None
 
             for model_name in models:
+                # Check if model is enabled in config
+                if not self._is_model_enabled(model_name):
+                    logger.info(f"  Skipping {model_name} (disabled in config)")
+                    continue
+
                 result = None
                 # Gating logic for LSTM
                 if 'lstm' in model_name:
