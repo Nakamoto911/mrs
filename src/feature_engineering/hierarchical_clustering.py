@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 import logging
+import warnings
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from enum import Enum
@@ -62,7 +63,8 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
     }
 
     def __init__(self,
-                 similarity_threshold: float = 0.80,
+                 similarity_threshold: Optional[float] = 0.80,
+                 n_clusters: Optional[int] = None,
                  linkage_method: str = 'average',
                  selection_config: Optional[SelectionConfig] = None,
                  min_observations: int = 60):
@@ -71,11 +73,13 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         
         Args:
             similarity_threshold: Features with |corr| > threshold are in same cluster
+            n_clusters: Force a specific number of clusters (overrides similarity_threshold if set)
             linkage_method: 'average', 'single', 'complete', or 'ward'
             selection_config: Configuration for representative selection
             min_observations: Minimum observations for correlation calculation
         """
         self.similarity_threshold = similarity_threshold
+        self.n_clusters = n_clusters
         self.linkage_method = linkage_method
         self.selection_config = selection_config or SelectionConfig()
         self.min_observations = min_observations
@@ -220,11 +224,20 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
             self.clusters = {i: [col] for i, col in enumerate(df.columns)}
             return self.clusters
         
-        # Cut dendrogram at distance threshold
-        # Distance threshold = 1 - similarity_threshold
-        distance_threshold = 1 - self.similarity_threshold
-        
-        labels = fcluster(self.linkage_matrix, t=distance_threshold, criterion='distance')
+        # Cut dendrogram at distance threshold or force N clusters
+        if self.n_clusters is not None:
+            # Force exactly N clusters
+            logger.info(f"Clustering into exactly {self.n_clusters} orthogonal factors (criterion='maxclust').")
+            labels = fcluster(self.linkage_matrix, t=self.n_clusters, criterion='maxclust')
+        elif self.similarity_threshold is not None:
+            # Distance threshold = 1 - similarity_threshold
+            distance_threshold = 1 - self.similarity_threshold
+            logger.info(f"Clustering by similarity > {self.similarity_threshold} (criterion='distance').")
+            labels = fcluster(self.linkage_matrix, t=distance_threshold, criterion='distance')
+        else:
+            # Fallback: each feature in its own cluster
+            logger.warning("Neither n_clusters nor similarity_threshold provided. Defaulting to each feature in its own cluster.")
+            labels = np.arange(len(df.columns)) + 1
         
         # Create cluster mapping
         self.cluster_labels = dict(zip(df.columns, labels))
@@ -328,7 +341,20 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         
         if method == SelectionMethod.CENTROID:
             centroid = cluster_df.mean(axis=1)
-            correlations = {col: abs(cluster_df[col].corr(centroid, method='spearman')) for col in present_features}
+            correlations = {}
+            
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="An input array is constant")
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                
+                for col in present_features:
+                    # Check std dev to avoid constant input warning if possible (though catch_warnings should handle it)
+                    if cluster_df[col].std() == 0 or centroid.std() == 0:
+                        correlations[col] = 0
+                    else:
+                        c = cluster_df[col].corr(centroid, method='spearman')
+                        correlations[col] = abs(c) if not pd.isna(c) else 0
+
             rep = max(correlations, key=lambda k: correlations.get(k, 0))
             logger.debug(f"Selected representative {rep} via Medoid method")
             return rep
@@ -478,7 +504,10 @@ def reduce_features_by_clustering(df: pd.DataFrame,
     Returns:
         Tuple of (reduced DataFrame, cluster info DataFrame)
     """
-    clusterer = HierarchicalClusterSelector(similarity_threshold=similarity_threshold)
+    clusterer = HierarchicalClusterSelector(
+        similarity_threshold=similarity_threshold,
+        n_clusters=None # Default to threshold-based for safety in legacy helper
+    )
     reduced_df = clusterer.get_reduced_features(df, target)
     cluster_info = clusterer.get_cluster_info()
     

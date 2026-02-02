@@ -5,14 +5,14 @@ A quantitative research platform for discovering which macroeconomic variables d
 ## Key Innovations
 
 1. **Causality-First Data Selection**: Explicitly excludes FRED-MD Category 8 (Stock Market) and Category 6 (Interest and Exchange Rates) to prevent circularity and ensure focus on lead indicators.
-1. **Asset-Specific Regime Detection**: Each asset gets independent bullish/bearish classification.
-2. **Super-Clustering**: Eliminates feature redundancy at 0.40 similarity threshold using **Medoid Selection** for maximum stability.
-3. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages.
-4. **Broad Feature Generation**: Generates ~750 Slope (Transformed) and Level (Quintile) features for all variables.
-5. **Orthogonality Verification**: Automated checks ensure non-linear "Level" and linear "Slope" features remain distinct.
-6. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals.
-7. **Dynamic Data Strategy**: Automated identification of series via FRED-MD appendix to enable robust category-based filtering.
-8. **Excess Return Targeting**: Target variable is Excess Return (Stock Return - Risk Free Rate) to isolate risk premium.
+2. **Asset-Specific Regime Detection**: Each asset gets independent bullish/bearish classification.
+3. **Super-Clustering**: Eliminates feature redundancy by forcing exactly **20 Orthogonal Factors** using **Medoid Selection** for maximum stability.
+4. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages.
+5. **Broad Feature Generation**: Generates ~750 Slope (Transformed) and Level (Quintile) features for all variables.
+6. **Orthogonality Verification**: Automated checks ensure non-linear "Level" and linear "Slope" features remain distinct.
+7. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals.
+8. **Dynamic Data Strategy**: Automated identification of series via FRED-MD appendix to enable robust category-based filtering.
+9. **Excess Return Targeting**: Target variable is Excess Return (Stock Return - Risk Free Rate) to isolate risk premium.
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ macro_regime_system/
 4. Create quintile features for ALL variables (Levels)
 5. Validated Cointegration analysis (ECT)
 6. Momentum features
-7. **Super-Clustering (0.40) → ~250-300 broad factor representatives**
+7. **Super-Clustering → 20 Orthogonal Factor representatives**
 
 ## Models
 

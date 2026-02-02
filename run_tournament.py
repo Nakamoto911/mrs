@@ -158,6 +158,7 @@ def create_pipeline_for_model(model_instance, coint_pairs, coint_cfg, clustering
         )),
         ('clustering', HierarchicalClusterSelector(
             similarity_threshold=clustering_cfg.get('similarity_threshold', 0.80),
+            n_clusters=clustering_cfg.get('n_clusters'),
             selection_config=get_selection_config_from_dict(clustering_cfg)
         )),
         ('imputer', PointInTimeImputer(strategy='median')),

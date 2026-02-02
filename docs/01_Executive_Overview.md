@@ -65,7 +65,7 @@ Each asset gets independent bullish/bearish classification via Statistical Jump 
 
 ### 2. Hierarchical Clustering Eliminates Substitution Instability
 
-Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "activity") at 0.40 similarity threshold (Super-Clustering). Selects ONE representative per cluster using Medoid Selection. Ensures dominant drivers represent broad economic forces, not statistical variations. Result: Stable SHAP values, clear interpretation (top 10 = 10 distinct economic themes).
+Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "activity") into **20 Orthogonal Factors**. Selects ONE representative per cluster using Medoid Selection. Ensures dominant drivers represent broad economic forces, not statistical variations. Result: Stable SHAP values, clear interpretation (top 10 = 10 distinct economic themes).
 
 ### 3. Two-Phase Data Strategy: Revised → Real-Time
 
@@ -100,7 +100,7 @@ For horizons with annual rebalancing: 12M balances macro signal extraction with 
 
 ### Stage 1: Data Acquisition & Feature Engineering
 
-Download FRED-MD (128 variables) + ETF prices via independent `data_acquisition.py` script. Save to human-readable CSVs. **Categories 6 (Interest and Exchange Rates) & 8 (Stock Market) are strictly excluded.** Extend asset history to 1959 using spliced FRED-MD proxies (`S&P 500`, `GS10`, `PPICMM`). Generate ~750 features through 7-step pipeline. Apply hierarchical clustering @ 0.40 threshold. Result: ~250–300 cluster representatives. **Time:** 5–10 min for data update, 15–20 min for feature engineering. *(See Appendix A for complete details)*
+Download FRED-MD (128 variables) + ETF prices via independent `data_acquisition.py` script. Save to human-readable CSVs. **Categories 6 (Interest and Exchange Rates) & 8 (Stock Market) are strictly excluded.** Extend asset history to 1959 using spliced FRED-MD proxies (`S&P 500`, `GS10`, `PPICMM`). Generate ~750 features through 7-step pipeline. Apply hierarchical clustering to force **20 Orthogonal Factors**. Result: exactly 20 cluster representatives. **Time:** 5–10 min for data update, 15–20 min for feature engineering. *(See Appendix A for complete details)*
 
 ### Stage 2: Asset-Specific Regime Detection
 
@@ -123,7 +123,7 @@ Streamlit dashboard (5 pages): Experiment config, model comparison, feature impo
 ## System Deliverables
 
 - **Automated model tournament scripts** — Train all models, compute metrics, rank performance
-- **Feature engineering pipeline** — ~250–300 cluster representatives from FRED-MD
+- **Feature engineering pipeline** — 20 orthogonal factor representatives from FRED-MD
 - **Dominant driver reports** — Top 5–10 macro features per asset with SHAP values and current signals
 - **Interactive Streamlit dashboard** — Model comparison, feature importance, regime monitoring
 - **ALFRED validation report** — Revision risk analysis, feature stability, deployment recommendations

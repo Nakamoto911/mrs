@@ -156,20 +156,21 @@ features:
 
   # Hierarchical clustering
   clustering:
-    # CHANGED: Lowered from 0.80 to 0.40 to capture broad economic themes
-    similarity_threshold: 0.40
+    # UPDATED: Force exactly 20 orthogonal economic drivers
+    n_clusters: 20
+    similarity_threshold: null
     linkage_method: "average"   # Keep "average" to encourage spherical clusters
     distance_metric: "correlation"
     # Feature selection within clusters
     selection:
-      # STRICTLY ENFORCED: Use Centroid/Medoid selection
+      # STRICTLY UNSUPERVISED: Select the "Medoid" (feature closest to cluster center)
       method: "centroid" 
       
-      # Disable IC-based selection to prevent overfitting
+      # DISABLE all target-aware selection (No Snooping)
       ic_based:
         enabled: false 
-        lag_buffer_months: 24  # Must exceed forecast horizon
-        min_observations: 60   # Minimum obs for IC calculation
+        lag_buffer_months: 24
+        min_observations: 60
 
 # =============================================================================
 # Inference Configuration
