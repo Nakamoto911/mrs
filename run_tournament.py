@@ -98,14 +98,19 @@ from evaluation.robustness import run_suite
 
 # Configure logging
 Path('experiments/tournament_logs').mkdir(parents=True, exist_ok=True)
+log_handlers = [logging.StreamHandler()]
+try:
+    log_file = f'experiments/tournament_logs/tournament_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+    log_handlers.append(logging.FileHandler(log_file))
+except Exception as e:
+    # Fallback if file logging fails (e.g. permission issues on external drives)
+    print(f"Warning: Could not initialize file logging: {e}")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)-7s | %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler(),
-        # logging.FileHandler(f'experiments/tournament_logs/tournament_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
-    ]
+    handlers=log_handlers
 )
 logger = logging.getLogger(__name__)
 
@@ -369,6 +374,108 @@ class ModelTournament:
         (self.experiments_dir / 'regimes').mkdir(exist_ok=True)
         (self.experiments_dir / 'reports').mkdir(exist_ok=True)
         (self.experiments_dir / 'tournament_logs').mkdir(exist_ok=True)
+        
+        # Aggregated stats for summary
+        self.feature_reduction_stats = []
+    
+    def _log_configuration_summary(self):
+        """Log a detailed Markdown summary of the configuration."""
+        cv_cfg = self.config.get('validation', {}).get('cv', {})
+        holdout_cfg = self.config.get('validation', {}).get('holdout', {})
+        coint_cfg = self.config.get('features', {}).get('cointegration', {})
+        clustering_cfg = self.config.get('features', {}).get('clustering', {})
+        ensemble_cfg = self.config.get('ensemble', {})
+        
+        logger.info("\n" + "=" * 60)
+        logger.info("## 1. DETAILED CONFIGURATION")
+        logger.info("-" * 60)
+        
+        logger.info("### Global Settings")
+        logger.info(f"- **Assets**: {', '.join(self.ASSETS)}")
+        logger.info(f"- **Cross-Validation**: {cv_cfg.get('validation_months', 36)}M validation, {cv_cfg.get('step_months', 6)}M step")
+        logger.info(f"- **Holdout**: {'Enabled (' + str(holdout_cfg.get('holdout_pct', 0.15)*100) + '%)' if self.holdout_enabled else 'Disabled'}")
+        
+        logger.info("\n### Feature Engineering")
+        logger.info(f"- **Cointegration**: {'Enabled' if coint_cfg.get('validate', True) else 'Disabled'}")
+        logger.info(f"  - Stability Threshold: {coint_cfg.get('stability_threshold', 0.70)}")
+        logger.info(f"  - Bayesian Priors: {'Enabled' if coint_cfg.get('priors', {}).get('enabled', False) else 'Disabled'}")
+        logger.info(f"- **Feature Reduction**: Clustering")
+        logger.info(f"  - Similarity Threshold: {clustering_cfg.get('similarity_threshold', 0.40)}")
+        logger.info(f"  - Selection Method: {clustering_cfg.get('selection', {}).get('method', 'centroid')}")
+        
+        logger.info("\n### Model Parameters")
+        enabled_models = [m for m in self.model_configs.keys() if self._is_model_enabled(m)]
+        for m in enabled_models:
+            params = self.model_configs[m].get('params', {})
+            param_str = ", ".join([f"{k}={v}" for k, v in params.items()])
+            logger.info(f"- **{m}**: {param_str if param_str else 'Default parameters'}")
+            
+        if ensemble_cfg.get('enabled', True):
+            logger.info("\n### Ensemble Strategy")
+            logger.info(f"- **Size**: Top {ensemble_cfg.get('size', 5)} models")
+            logger.info(f"- **Method**: {ensemble_cfg.get('selection', {}).get('method', 'simple')}")
+
+        logger.info("=" * 60 + "\n")
+
+    def _log_tournament_summary(self, results_df: pd.DataFrame):
+        """Log a Markdown-formatted table of tournament results."""
+        if results_df.empty:
+            logger.warning("\n## 2. TOURNAMENT RESULTS SUMMARY: No results to display.")
+            return
+
+        logger.info("\n## 2. RESULTS SUMMARY")
+        logger.info("-" * 60)
+        
+        # Format results table
+        # Columns: Asset, Model, IC Mean, IC Std, Hit Rate, Sharpe, T-Stat, P-Val, Rating
+        table_cols = ['asset', 'model', 'IC_mean', 'IC_std', 'hit_rate_mean', 'implied_sharpe', 'IC_t_stat', 'IC_p_value', 'IC_rating']
+        
+        # Ensure columns exist (some might be missing if errors occurred)
+        existing_cols = [c for c in table_cols if c in results_df.columns]
+        display_df = results_df[existing_cols].copy()
+        
+        # Rename for cleaner table
+        col_map = {
+            'asset': 'Asset', 'model': 'Model', 'IC_mean': 'IC Mean', 
+            'IC_std': 'IC Std', 'hit_rate_mean': 'Hit Rate', 
+            'implied_sharpe': 'Sharpe', 'IC_t_stat': 'T-Stat', 
+            'IC_p_value': 'P-Val', 'IC_rating': 'Rating'
+        }
+        display_df.columns = [col_map.get(c, c) for c in display_df.columns]
+        
+        # Log as Markdown table
+        logger.info(display_df.to_markdown(index=False, floatfmt=".3f"))
+        logger.info("-" * 60)
+
+        # Log Holdout Results if available
+        if hasattr(self, 'holdout_results') and not self.holdout_results.empty:
+            logger.info("\n## 3. HOLDOUT VALIDATION")
+            logger.info("-" * 60)
+            h_df = self.holdout_results.copy()
+            # Columns: asset, model, cv_IC, holdout_IC, IC_degradation
+            h_cols = ['asset', 'model', 'cv_IC', 'holdout_IC', 'IC_degradation']
+            h_display = h_df[[c for c in h_cols if c in h_df.columns]].copy()
+            h_display.columns = ['Asset', 'Model', 'CV IC', 'Holdout IC', 'Degradation']
+            logger.info(h_display.to_markdown(index=False, floatfmt=".3f"))
+            logger.info("-" * 60)
+
+        # Log Feature Reduction Aggregates if available
+        if self.feature_reduction_stats:
+            logger.info("\n## 4. FEATURE REDUCTION SUMMARY")
+            logger.info("-" * 60)
+            stats_df = pd.DataFrame(self.feature_reduction_stats)
+            agg_stats = stats_df.groupby('asset').agg({
+                'n_in': 'mean',
+                'n_out': 'mean'
+            }).reset_index()
+            agg_stats['reduction_pct'] = (1 - agg_stats['n_out'] / agg_stats['n_in']) * 100
+            
+            logger.info(agg_stats.to_markdown(index=False, floatfmt=".1f"))
+            logger.info("-" * 60)
+            
+        logger.info("\n" + "=" * 60)
+        logger.info("AUDIT REPORT COMPLETE")
+        logger.info("=" * 60 + "\n")
     
     def run_feature_pipeline(self, fred_api_key: Optional[str] = None) -> pd.DataFrame:
         """
@@ -616,6 +723,7 @@ class ModelTournament:
             logger.info(f"    Aligned data with {pub_lag} month lag. {len(X_train)} training samples available.")
             logger.info(f"    Forwarding {len(X_train.columns)} features to model layer")
             
+            asset_results = []
             # Track fold metadata for cointegration report (shared across models)
             latest_fold_metadata = None
 
@@ -685,6 +793,7 @@ class ModelTournament:
                 p_val = metrics['IC_p_value']
                 sig = '*' if p_val < 0.05 else ''
                 
+                
                 logger.info(f"    {model_name}: IC: {ic:.3f} (t={t_stat:.2f}, p={p_val:.3f}{sig})")
 
                 # Validate Benchmark
@@ -706,6 +815,7 @@ class ModelTournament:
                         logger.warning(f"      - {w}")
 
                 results.append(metrics)
+                asset_results.append(metrics)
                 
                 # Save Predictions
                 if res.get('predictions') is not None:
@@ -806,6 +916,13 @@ class ModelTournament:
                     logger.info(f"Avg Features In:  {avg_in:.1f}")
                     logger.info(f"Avg Features Out: {avg_out:.1f}")
                     logger.info(f"Avg Reduction:    {reduction:.1f}%")
+                    
+                    # Store stats for summary
+                    self.feature_reduction_stats.append({
+                        'asset': asset,
+                        'n_in': avg_in,
+                        'n_out': avg_out
+                    })
                     
                     # Track feature selection stability
                     feature_counts = {}
@@ -943,35 +1060,44 @@ class ModelTournament:
         results_path = self.experiments_dir / 'cv_results' / 'tournament_results.csv'
         results_df = pd.DataFrame(results)
         
-        if results_path.exists():
-            try:
-                existing_df = pd.read_csv(results_path)
-                # Filter out old results for the assets we just ran
-                # "keep rows where asset is NOT in the current run's assets"
-                assets_ran = set(results_df['asset'].unique())
-                preserved_df = existing_df[~existing_df['asset'].isin(assets_ran)]
-                
-                if not preserved_df.empty:
-                    results_df = pd.concat([preserved_df, results_df], ignore_index=True)
-                    
-            except Exception as e:
-                logger.error(f"Error merging with existing results: {e}")
-                # Fallback: Just save what we have if merge fails (better than crashing)
-        
-        # Apply multiple testing correction
-        self.apply_multiple_testing_correction(results_df)
-        
-        results_df.to_csv(results_path, index=False)
+        try:
+            if results_path.exists():
+                try:
+                    existing_df = pd.read_csv(results_path)
+                    assets_ran = set(results_df['asset'].unique())
+                    preserved_df = existing_df[~existing_df['asset'].isin(assets_ran)]
+                    if not preserved_df.empty:
+                        results_df = pd.concat([preserved_df, results_df], ignore_index=True)
+                except Exception as e:
+                    logger.error(f"Error merging with existing results: {e}")
+            
+            # Apply multiple testing correction
+            self.apply_multiple_testing_correction(results_df)
+            
+            # Final Save
+            results_df.to_csv(results_path, index=False)
+        except Exception as e:
+            logger.error(f"Critical error during results post-processing/saving: {e}. Progress will continue but CSV may be missing.")
         
         self.results = results_df
         
         # --- Robustness Suite (Spec 11) ---
-        self.run_robustness_checks(results_df, assets)
+        try:
+            self.run_robustness_checks(results_df, assets)
+        except Exception as e:
+            logger.error(f"Error during robustness checks: {e}")
         
         # AFTER all development is complete, evaluate on holdout
         if self.holdout_enabled:
-            self.evaluate_holdout(assets, models)
+            try:
+                self.evaluate_holdout(assets, models)
+            except Exception as e:
+                logger.error(f"Error during holdout evaluation: {e}")
             
+        # --- TOURNAMENT SUMMARY REPORT ---
+        self._log_configuration_summary()
+        self._log_tournament_summary(results_df)
+
         return results_df
     
     def run_robustness_checks(self, df: pd.DataFrame, assets: List[str]):
