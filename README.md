@@ -8,7 +8,7 @@ A quantitative research platform for discovering which macroeconomic variables d
 2. **Asset-Specific Regime Detection**: Each asset gets independent bullish/bearish classification.
 3. **Super-Clustering**: Eliminates feature redundancy by forcing exactly **20 Orthogonal Factors** using **Medoid Selection** for maximum stability.
 4. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages.
-5. **Broad Feature Generation**: Generates ~750 Slope (Transformed) and Level (Quintile) features for all variables.
+5. **Safe Quintile Generation**: Generates quintile features (Levels) inside the Cross-Validation pipeline using `QuintileTransformer`, ensuring thresholds are learned strictly from training data to eliminate look-ahead bias.
 6. **Orthogonality Verification**: Automated checks ensure non-linear "Level" and linear "Slope" features remain distinct.
 7. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals.
 8. **Dynamic Data Strategy**: Automated identification of series via FRED-MD appendix to enable robust category-based filtering.

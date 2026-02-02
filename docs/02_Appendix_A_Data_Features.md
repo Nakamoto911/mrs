@@ -162,16 +162,8 @@ Automated pipeline: ~750 raw features generated pointwise or using strictly expa
 - Test each ratio for stationarity (many are cointegration relationships)
 - **Result:** ~50–100 ratio features
 
-### Step 3.5: Create Regime-Level Quintile Features (The "Generate All" Strategy)
-
-- Generate quintiles (Levels) for ALL remaining ~120 variables in the dataset.
-- Compute historical quintiles using a **Robust Expanding Rank** methodology:
-  - **Rank-Based**: $Score = (Rank - 1) / (Count - 1)$ using expanding windows.
-  - **Boundary Safety**: Clips final quintiles to $[1, N]$ to handle exact 1.0 scores.
-  - **Burn-In**: 60 Months (5 Years) minimum history required.
-  - **Stationarity Check Bypass**: Quintiles (Levels) are valid even on non-stationary raw data, whereas Slopes require transformation.
-- Create features: One-hot encoding.
-- **Result**: ~600 Level features (5 quintiles per variable) complementing ~150 Slope features.
+### Step 3.5: Create Regime-Level Quintile Features (MOVED)
+*This step is now part of the **State-Dependent Features (PIT Pipeline)**. See Section 4.*
 
 ### Step 4: Cointegration Analysis & Error Correction Terms (MOVED)
 *This step is now part of the **State-Dependent Features (PIT Pipeline)**. See Section 4.*

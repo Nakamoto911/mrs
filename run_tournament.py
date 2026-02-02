@@ -41,7 +41,6 @@ from preprocessing import (
 )
 from feature_engineering import (
     generate_all_ratio_features,
-    generate_all_quintile_features,
     generate_cointegration_features,
     generate_all_momentum_features,
     reduce_features_by_clustering
@@ -95,6 +94,7 @@ from models.lstm_v2 import get_sequence_length, SequenceStrategy
 from preprocessing.scaling import TimeSeriesScaler
 from preprocessing.imputation import PointInTimeImputer
 from evaluation.robustness import run_suite
+from feature_engineering.pipeline_transformers import QuintileTransformer
 
 # Configure logging
 Path('experiments/tournament_logs').mkdir(parents=True, exist_ok=True)
@@ -156,6 +156,7 @@ def create_pipeline_for_model(model_instance, coint_pairs, coint_cfg, clustering
             stability_threshold=coint_cfg.get('stability_threshold', 0.70),
             prior_config=coint_cfg.get('priors', {})
         )),
+        ('quintiles', QuintileTransformer(n_quintiles=5)),
         ('clustering', HierarchicalClusterSelector(
             similarity_threshold=clustering_cfg.get('similarity_threshold', 0.80),
             n_clusters=clustering_cfg.get('n_clusters'),
@@ -516,14 +517,6 @@ class ModelTournament:
         logger.info("Step 3: Generating macro ratios...")
         ratios = generate_all_ratio_features(raw_data)
         
-        # Step 3.5: Generate quintile features
-        logger.info("Step 3.5: Generating quintile features...")
-        # Combine raw data and ratios for quintile analysis
-        quintile_data = pd.concat([raw_data, ratios], axis=1)
-        # Remove duplicates
-        quintile_data = quintile_data.loc[:, ~quintile_data.columns.duplicated()]
-        quintiles = generate_all_quintile_features(quintile_data)
-        
         # Step 4: Cointegration analysis (DEPRECATED: Moved to PIT pipeline)
         # logger.info("Step 4: Running cointegration analysis...")
         # ect_features, coint_summary = generate_cointegration_features(raw_data)
@@ -559,7 +552,7 @@ class ModelTournament:
         all_features = pd.concat([
             transformed,
             ratios,
-            quintiles,
+            # quintiles,
             # ect_features,
             momentum,
             raw_levels
