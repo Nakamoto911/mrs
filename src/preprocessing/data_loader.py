@@ -41,15 +41,25 @@ class FREDMDLoader:
     # Stable download URL for FRED-MD current (Dec 2025) - retained for reference
     FRED_MD_URL = "https://www.stlouisfed.org/-/media/project/frbstl/stlouisfed/research/fred-md/monthly/2025-12-md.csv?sc_lang=en&hash=14BCC7AA1D5AB89D3459B69B8AE67D10"
     
-    def __init__(self, data_dir: str = "data/raw", fred_api_key: Optional[str] = None):
+    # Category mappings (Specifically Category 8 as requested)
+    CATEGORY_MAPPING = {
+        'S&P 500': 8,
+        'S&P div yield': 8,
+        'S&P PE ratio': 8,
+        # 'S&P: indust': 8, # Alternative name in some vintages
+    }
+    
+    def __init__(self, data_dir: str = "data/raw", fred_api_key: Optional[str] = None, config: Optional[dict] = None):
         """
         Initialize FRED-MD loader.
         
         Args:
             data_dir: Directory containing the acquired data (fred_md.csv)
             fred_api_key: Not used in this reader-only version
+            config: Optional configuration dictionary
         """
         self.data_dir = Path(data_dir)
+        self.config = config or {}
         self._raw_data = None
         self._transform_codes = None
         self._transformed_data = None
@@ -78,6 +88,26 @@ class FREDMDLoader:
             df['sasdate'] = pd.to_datetime(df['sasdate'])
             df.set_index('sasdate', inplace=True)
             
+        # Apply Category/Variable Exclusions (Spec 01)
+        fred_cfg = self.config.get('data', {}).get('fred_md', {})
+        exclude_cats = fred_cfg.get('exclude_categories', [])
+        exclude_vars = fred_cfg.get('exclude_variables', [])
+        
+        cols_to_drop = []
+        for col in df.columns:
+            # Check exclusions
+            if col in exclude_vars:
+                cols_to_drop.append(col)
+                continue
+            
+            cat = self.CATEGORY_MAPPING.get(col)
+            if cat in exclude_cats:
+                cols_to_drop.append(col)
+                
+        if cols_to_drop:
+            logger.info(f"Excluding {len(cols_to_drop)} variables based on configuration: {cols_to_drop}")
+            df = df.drop(columns=cols_to_drop)
+
         # Load Transforms
         self._transform_codes = {}
         if transforms_path.exists():
@@ -441,10 +471,10 @@ def load_all_data(config: dict, fred_api_key: Optional[str] = None) -> Dict:
     result = {}
     
     # Load FRED-MD
-    # Load FRED-MD
     fred_loader = FREDMDLoader(
         data_dir=config.get('data_dir', 'data/raw'),
-        fred_api_key=fred_api_key
+        fred_api_key=fred_api_key,
+        config=config
     )
     result['fred_md_raw'] = fred_loader.download_current_vintage()
     result['fred_md_transformed'] = fred_loader.apply_transformations()

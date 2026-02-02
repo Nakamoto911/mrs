@@ -242,7 +242,41 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         sizes = [len(features) for features in self.clusters.values()]
         logger.debug(f"Cluster sizes: min={min(sizes)}, max={max(sizes)}, median={np.median(sizes):.0f}")
         
+        # Verify Level vs Slope separation (Spec 05)
+        self.verify_level_slope_separation()
+        
         return self.clusters
+    
+    def verify_level_slope_separation(self) -> None:
+        """
+        Logs warning if Level and Slope of the same variable appear in the same cluster.
+        Assumes naming convention: 'VAR' (Slope) and 'VAR_Qx' (Level).
+        """
+        if self.clusters is None:
+            return
+            
+        for cluster_id, features in self.clusters.items():
+            # Extract base variable names
+            # Slope: 'UNRATE' -> 'UNRATE'
+            # Level: 'UNRATE_Q1' -> 'UNRATE'
+            base_vars = set()
+            conflicting_vars = set()
+            
+            for feat in features:
+                # Heuristic: split by _Q or _quintile
+                base = feat.split('_Q')[0].split('_quintile')[0]
+                if base in base_vars:
+                    # Potential conflict: check if one is slope and one is level
+                    # If we have both 'VAR' and 'VAR_Qx' in the same cluster
+                    if any(f == base for f in features) and any(f.startswith(base + "_Q") or f.startswith(base + "_quintile") for f in features):
+                        conflicting_vars.add(base)
+                base_vars.add(base)
+                
+            if conflicting_vars:
+                 logger.debug(
+                     f"Cluster {cluster_id} contains both Level and Slope for variables: {list(conflicting_vars)}. "
+                     f"Features: {features}"
+                 )
     
     def select_representative(self, cluster_features: List[str],
                              df: pd.DataFrame,
@@ -295,7 +329,9 @@ class HierarchicalClusterSelector(BaseEstimator, TransformerMixin):
         if method == SelectionMethod.CENTROID:
             centroid = cluster_df.mean(axis=1)
             correlations = {col: abs(cluster_df[col].corr(centroid, method='spearman')) for col in present_features}
-            return max(correlations, key=lambda k: correlations.get(k, 0))
+            rep = max(correlations, key=lambda k: correlations.get(k, 0))
+            logger.debug(f"Selected representative {rep} via Medoid method")
+            return rep
         
         elif method == SelectionMethod.VARIANCE:
             return cluster_df.var().idxmax()

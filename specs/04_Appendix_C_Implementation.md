@@ -75,6 +75,8 @@ Dropdown to select asset, performance metrics table (IC, Rating, RMSE, R², Hit 
 
 Top 20 features bar chart (SHAP values), tabs for Overall/Bullish/Bearish regimes, sortable table of all features, time-series feature stability plot, waterfall chart for specific predictions, export CSV
 
+To maintain estimation integrity across the high-dimensional (~750-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):
+
 **Page 4: Dominant Drivers Monitoring**
 
 Real-time monitoring sheet (rank, feature, SHAP, current percentile, signal) with **Ensemble Consensus mode**, alert indicators for extreme ranges (>95th or <5th percentile), regime summary (Bullish/Bearish/Neutral), **"Vote Split" progress bar** (consensus%), historical regime timeline
@@ -203,7 +205,7 @@ macro_regime_system/
 ## Final Deliverables Checklist
 
 - [ ] Automated model tournament scripts
-- [ ] Feature engineering pipeline (250–300 cluster representatives)
+- [ ] Feature engineering pipeline (~250–300 cluster representatives)
 - [ ] Dominant driver reports (top 5–10 per asset with SHAP values)
 - [ ] Interactive Streamlit dashboard (5 pages)
 - [ ] ALFRED validation report (revision risk, feature stability)

@@ -36,21 +36,18 @@ class FrozenFeaturePipeline:
         """
         logger.debug(f"Transforming vintage with {len(vintage_df)} rows")
         
-        # 1. Basic Transformations
+        # 1. Level Generation: Generate quintiles on Raw vintage data for ALL columns (Spec 02)
+        # Apply Stationarity Check bypass: Levels are valid even on non-stationary raw data
+        quintiles = generate_all_quintile_features(vintage_df, variables="all")
+        
+        # 2. Slope Generation: Apply stationarity transformations to Raw data
         transformer = FREDMDTransformer(self.transform_codes)
         transformed = transformer.transform_dataframe(vintage_df)
         
-        # 2. Ratios
+        # 3. Ratios (also Slope features)
         ratios = generate_all_ratio_features(vintage_df)
         
-        # 3. Quintiles (Needs raw data and ratios)
-        quintile_data = pd.concat([vintage_df, ratios], axis=1)
-        quintile_data = quintile_data.loc[:, ~quintile_data.columns.duplicated()]
-        quintiles = generate_all_quintile_features(quintile_data)
-        
         # 4. Cointegration (ECT)
-        # Note: ECT features might depend on a fitted manifest. 
-        # For validation, we should ideally use the precomputed manifest if it exists.
         try:
             ect_features, _ = generate_cointegration_features(vintage_df)
         except Exception as e:
@@ -60,13 +57,13 @@ class FrozenFeaturePipeline:
         # 5. Momentum (Uses transformed series)
         momentum = generate_all_momentum_features(transformed)
         
-        # Combine all
+        # Combine all to create the full ~750 feature pool
         all_generated = pd.concat([
-            transformed,
-            ratios,
-            quintiles,
-            ect_features,
-            momentum
+            transformed,    # Slope: Stationarity transformed
+            ratios,         # Slope: Ratios
+            quintiles,      # Level: Quintiles (all columns)
+            ect_features,   # Level/Slope: Cointegration
+            momentum        # Slope: Momentum
         ], axis=1)
         
         # Remove duplicates

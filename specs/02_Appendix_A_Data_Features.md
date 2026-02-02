@@ -29,7 +29,7 @@
 - Monthly frequency, 1959–present
 - Developed by McCracken & Ng (2016)
 - Standardized transformation codes for stationarity
-- 8 categories: Output/Income (17), Labor (32), Housing (10), Consumption/Orders (14), Money/Credit (14), Interest Rates/Spreads (22), Prices (21), Stock Market (3)
+- 8 categories: Output/Income (17), Labor (32), Housing (10), Consumption/Orders (14), Money/Credit (14), Interest Rates/Spreads (22), Prices (21), Stock Market (3 - **Excluded for Causality**)
 
 **Historical Vintages (ALFRED):**
 - **1999-08 to 2014-12:** `historical_fred-md.zip`
@@ -112,7 +112,7 @@ A single PIT observation for date $t$ is NOT simply a row from a table; it is th
 
 ## Six-Step Feature Engineering Pipeline (Stateless)
 
-Automated pipeline: ~600 raw features generated pointwise or using strictly expanding windows. This base feature set is pre-computed before the CV loop.
+Automated pipeline: ~750 raw features generated pointwise or using strictly expanding windows. This base feature set is pre-computed before the CV loop.
 
 ### Step 0: Data Acquisition
 
@@ -160,16 +160,16 @@ Automated pipeline: ~600 raw features generated pointwise or using strictly expa
 - Test each ratio for stationarity (many are cointegration relationships)
 - **Result:** ~50–100 ratio features
 
-### Step 3.5: Create Regime-Level Quintile Features
+### Step 3.5: Create Regime-Level Quintile Features (The "Generate All" Strategy)
 
-- Select ~15–20 key stationary variables (GS10, Fed Funds, spreads, VIX, unemployment)
+- Generate quintiles (Levels) for ALL remaining ~120 variables in the dataset.
 - Compute historical quintiles using a **Robust Expanding Rank** methodology:
   - **Rank-Based**: $Score = (Rank - 1) / (Count - 1)$ using expanding windows.
   - **Boundary Safety**: Clips final quintiles to $[1, N]$ to handle exact 1.0 scores.
   - **Burn-In**: 60 Months (5 Years) minimum history required.
-  - **Evaluation**: Computers **Monotonicity** (Spearman correlation of quintile means) and Q5-Q1 spread.
+  - **Stationarity Check Bypass**: Quintiles (Levels) are valid even on non-stationary raw data, whereas Slopes require transformation.
 - Create features: One-hot encoding.
-- **Result**: ~40–60 quintile features with high integrity.
+- **Result**: ~600 Level features (5 quintiles per variable) complementing ~150 Slope features.
 
 ### Step 4: Cointegration Analysis & Error Correction Terms (MOVED)
 *This step is now part of the **State-Dependent Features (PIT Pipeline)**. See Section 4.*
@@ -245,17 +245,17 @@ To prevent spurious discoveries, all "Champion" models undergo a final robustnes
 
 ### 4.2 The Solution: Hierarchical Clustering
 
-1. **Step 7.1:** Compute Spearman correlation matrix (600×600 features)
+1. **Step 7.1:** Compute Spearman correlation matrix (~750 features)
 2. **Step 7.2:** Convert to distance: Distance = 1 − |correlation|
    - Using absolute value ensures negative correlations treated as redundancy
 3. **Step 7.3:** Hierarchical clustering with average linkage
    - Why average? Balances Single (too aggressive) vs. Complete (too conservative)
-4. **Step 7.4:** Cut dendrogram at similarity threshold 0.80 (distance 0.20)
-   - Features with |corr| > 0.80 → Same cluster (high economic redundancy)
-5. **Step 7.5:** Select ONE representative per cluster:
-   - **Small clusters (2–3):** Highest univariate IC
-   - **Large clusters (10+):** Highest correlation to cluster centroid
-   - **Medium (4–9):** Centroid method, validate with IC
+4. **Step 7.4:** Cut dendrogram at similarity threshold 0.40 (distance 0.60)
+   - Lowered from 0.80 to capture broad economic factors/themes.
+5. **Step 7.5:** Select ONE representative per cluster using **Medoid Selection**:
+   - Strictly enforced Centroid/Medoid logic (selecting the feature closest to the mean).
+   - Ensures interpretability and stability across runs.
+   - Orthogonality Verification: Logs warning if Level and Slope of the same variable co-occur in one cluster.
 
 **Result:** ~250–300 features, each representing DISTINCT economic force. By fitting the clusterer on each training fold, we ensure that feature selection is based solely on correlations available at that specific point in time.
 
@@ -274,12 +274,12 @@ To prevent spurious discoveries, all "Champion" models undergo a final robustnes
 
 ### 4.4 Benefits vs. Simple Correlation Threshold
 
-| Aspect | Old (corr > 0.995) | New (Clustering @ 0.80) |
+| Aspect | Old (corr > 0.995) | New (Super-Clustering @ 0.40) |
 |---|---|---|
-| Features Removed | ~50–100 (near-duplicates) | ~300–350 (all redundancy) |
-| Substitution Stability | Poor — many substitutes remain | Excellent — one per force |
-| SHAP Stability | Low — rankings change across runs | High — stable dominant drivers |
-| Interpretability | Top 10 = 3 forces × 3 variants | Top 10 = 10 distinct forces |
+| Features Removed | ~50–100 (near-duplicates) | ~600+ (structural redundancy) |
+| Substitution Stability | Poor — many substitutes remain | Excellent — broad factors |
+| SHAP Stability | Low — rankings change across runs | High — stable economic themes |
+| Interpretability | Top 10 = 3 forces × 3 variants | Top 10 = 10 broad economic factors |
 
 
 - Update rolling features: 5 min

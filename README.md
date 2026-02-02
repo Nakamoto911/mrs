@@ -4,11 +4,13 @@ A quantitative research platform for discovering which macroeconomic variables d
 
 ## Key Innovations
 
-1. **Asset-Specific Regime Detection**: Each asset gets independent bullish/bearish classification
-2. **Hierarchical Clustering**: Eliminates feature substitution instability at 0.80 similarity threshold
-3. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages
-4. **Regime-Level Quintile Features**: Captures regime-dependent dynamics
-5. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals
+1. **Causality-First Data Selection**: Explicitly excludes FRED-MD Category 8 (Stock Market) to prevent circularity.
+1. **Asset-Specific Regime Detection**: Each asset gets independent bullish/bearish classification.
+2. **Super-Clustering**: Eliminates feature redundancy at 0.40 similarity threshold using **Medoid Selection** for maximum stability.
+3. **Two-Phase Data Strategy**: Discovery on lagged revised data, validation on ALFRED real-time vintages.
+4. **Broad Feature Generation**: Generates ~750 Slope (Transformed) and Level (Quintile) features for all variables.
+5. **Orthogonality Verification**: Automated checks ensure non-linear "Level" and linear "Slope" features remain distinct.
+6. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals.
 
 ## Quick Start
 
@@ -60,13 +62,13 @@ macro_regime_system/
 
 ## Feature Pipeline
 
-1. Acquire Data (FRED-MD + Assets) via independent script
-2. Apply transformations for stationarity
+1. Acquire Data (FRED-MD + Assets) - **Category 8 (Stocks) Excluded**
+2. Apply transformations for stationarity (Slopes)
 3. Generate macro ratios
-4. Create quintile features
+4. Create quintile features for ALL variables (Levels)
 5. Validated Cointegration analysis (ECT)
 6. Momentum features
-7. **Hierarchical clustering → ~250-300 features**
+7. **Super-Clustering (0.40) → ~250-300 broad factor representatives**
 
 ## Models
 

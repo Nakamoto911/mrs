@@ -43,16 +43,25 @@ class QuintileFeatureGenerator:
         return quintile.clip(1, self.n_quintiles)
 
     def generate_features(self, df: pd.DataFrame, variables=None) -> pd.DataFrame:
-        available_vars = [v for v in (variables or self.variables) if v in df.columns]
+        target_vars = variables or self.variables
+        if target_vars == "all":
+            available_vars = df.columns.tolist()
+        else:
+            available_vars = [v for v in target_vars if v in df.columns]
+            
         features_list = []
         for var in available_vars:
+            # Stationarity Check Bypass: Quintiles (Levels) are valid even on non-stationary data
             quintiles = self._compute_quintile_rank(df[var])
             if self.encoding == 'one_hot':
                 encoded = pd.concat([(quintiles == q).astype(float).rename(f"{var}_Q{q}") for q in range(1, self.n_quintiles+1)], axis=1)
                 encoded.loc[quintiles.isna()] = np.nan
-            else: encoded = pd.DataFrame(index=df.index)
+            else: 
+                encoded = pd.DataFrame(index=df.index)
+            
             encoded[f"{var}_quintile"] = quintiles
             features_list.append(encoded)
+            
         return pd.concat(features_list, axis=1) if features_list else pd.DataFrame(index=df.index)
 
 def compute_quintile_metrics(y_true, y_pred, n_quantiles=5):
@@ -71,7 +80,7 @@ def compute_quintile_metrics(y_true, y_pred, n_quantiles=5):
     
     return {'quintile_spread': spread, 'monotonicity': mono, 'q_means': means}
 
-def generate_all_quintile_features(df: pd.DataFrame, variables: Optional[List[str]] = None, n_quintiles: int = 5) -> pd.DataFrame:
+def generate_all_quintile_features(df: pd.DataFrame, variables: Optional[Union[List[str], str]] = None, n_quintiles: int = 5) -> pd.DataFrame:
     """Convenience function to generate all quintile features."""
     generator = QuintileFeatureGenerator(n_quintiles=n_quintiles, variables=variables)
     return generator.generate_features(df)

@@ -85,7 +85,7 @@ To reduce model-specific variance and improve out-of-sample stability, the syste
 
 ### 2.3 Robust Training Layer
 
-To maintain estimation integrity across the high-dimensional (744-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):
+To maintain estimation integrity across the high-dimensional (~750-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):
 
 **Data Integrity Protocols:**
 - **Sparse Feature Imputation:** **Strict Rolling Imputation** (Expanding Median) applied to features with < 20% missingness. By calculating medians on an expanding window and shifting by 1 month, we ensure that row $t$ is imputed using only data from $t-1$, eliminating look-ahead bias. If no history is available for a feature at $t$, it is filled with **0.0** (neutral prior) to ensure informational PIT validity. This applies to all model families (Linear, Tree, Neural). Series exceeding the missingness threshold are pruned PIT (Point-In-Time) to prevent signal dilution.

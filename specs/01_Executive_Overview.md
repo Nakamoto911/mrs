@@ -34,6 +34,9 @@ Build an automated model discovery platform identifying, for each asset (US Equi
 
 - Top 5–10 macroeconomic variables (dominant drivers) predicting future returns and volatility
 - How these drivers differ between bullish and bearish regimes
+### 2.3 Robust Training Layer
+
+To maintain estimation integrity across the high-dimensional (~750-feature) space, a standardized preprocessing layer is enforced within the training pipeline for **all model families** (Linear, Tree, Neural):
 - Which feature engineering approaches (levels, ratios, cointegration, quintiles) are most predictive
 - Which model families (linear, tree-based, neural networks) perform best
 - How robust relationships are to data revisions (real-time vs. revised data)
@@ -62,7 +65,7 @@ Each asset gets independent bullish/bearish classification via Statistical Jump 
 
 ### 2. Hierarchical Clustering Eliminates Substitution Instability
 
-Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "activity") at 0.80 similarity threshold. Selects ONE representative per cluster. Ensures dominant drivers represent distinct economic forces, not statistical variations. Result: Stable SHAP values, clear interpretation (top 10 = 10 forces, not 3 forces × 3 variants).
+Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "activity") at 0.40 similarity threshold (Super-Clustering). Selects ONE representative per cluster using Medoid Selection. Ensures dominant drivers represent broad economic forces, not statistical variations. Result: Stable SHAP values, clear interpretation (top 10 = 10 distinct economic themes).
 
 ### 3. Two-Phase Data Strategy: Revised → Real-Time
 
@@ -97,7 +100,7 @@ For 5-year horizons with semi-annual rebalancing: 12M too short for structural t
 
 ### Stage 1: Data Acquisition & Feature Engineering
 
-Download FRED-MD (128 variables) + ETF prices via independent `data_acquisition.py` script. Save to human-readable CSVs. Extend asset history to 1959 using spliced FRED-MD proxies (`S&P 500`, `GS10`, `PPICMM`). Generate ~600 features through 7-step pipeline. Apply hierarchical clustering @ 0.80 threshold. Result: ~250–300 cluster representatives. **Time:** 5–10 min for data update, 15–20 min for feature engineering. *(See Appendix A for complete details)*
+Download FRED-MD (128 variables) + ETF prices via independent `data_acquisition.py` script. Save to human-readable CSVs. Extend asset history to 1959 using spliced FRED-MD proxies (`S&P 500`, `GS10`, `PPICMM`). Generate ~750 features through 7-step pipeline. Apply hierarchical clustering @ 0.40 threshold. Result: ~250–300 cluster representatives. **Time:** 5–10 min for data update, 15–20 min for feature engineering. *(See Appendix A for complete details)*
 
 ### Stage 2: Asset-Specific Regime Detection
 

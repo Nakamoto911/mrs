@@ -10,6 +10,9 @@ data:
     url: "https://files.stlouisfed.org/files/htdocs/fred-md/monthly/current.csv"
     transform_url: "https://files.stlouisfed.org/files/htdocs/fred-md/Appendix_Tables_Update.pdf"
     n_variables: 128
+    # NEW: Explicitly exclude stock market variables (Category 8)
+    exclude_categories: [8]  # 8 = Stock Market
+    exclude_variables: []    # Optional: specific variables to drop
     categories:
       - name: "Output/Income"
         count: 17
@@ -93,17 +96,8 @@ features:
 
   # Quintile features
   quintiles:
-    variables:
-      - "GS10"          # 10-Year Treasury
-      - "FEDFUNDS"      # Fed Funds Rate
-      - "TB3MS"         # 3-Month Treasury
-      - "BAA10Y"        # Credit Spread (BAA-10Y)
-      - "AAA10Y"        # Credit Spread (AAA-10Y)
-      - "VIXCLSx"       # VIX
-      - "UNRATE"        # Unemployment Rate
-      - "UMCSENT"       # Consumer Sentiment
-      - "HOUST"         # Housing Starts
-      - "M2REAL"        # Real M2
+    # CHANGED: Set to "all" to auto-generate for every variable in the dataset
+    variables: "all" 
     n_quintiles: 5
     encoding: "one_hot"  # or "z_score_within_regime"
     min_observations: 60
@@ -162,16 +156,18 @@ features:
 
   # Hierarchical clustering
   clustering:
-    similarity_threshold: 0.80  # |correlation| > 0.80 = same cluster
-    linkage_method: "average"   # balance between single and complete
+    # CHANGED: Lowered from 0.80 to 0.40 to capture broad economic themes
+    similarity_threshold: 0.40
+    linkage_method: "average"   # Keep "average" to encourage spherical clusters
     distance_metric: "correlation"
     # Feature selection within clusters
     selection:
-      method: "centroid"  # DEFAULT: Use target-agnostic method
+      # STRICTLY ENFORCED: Use Centroid/Medoid selection
+      method: "centroid" 
       
-      # If using IC-based selection:
+      # Disable IC-based selection to prevent overfitting
       ic_based:
-        enabled: false  # Disabled by default
+        enabled: false 
         lag_buffer_months: 24  # Must exceed forecast horizon
         min_observations: 60   # Minimum obs for IC calculation
 
