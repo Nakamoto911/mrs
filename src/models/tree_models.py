@@ -46,14 +46,21 @@ class TreeModelWrapper(BaseEstimator):
                 import xgboost as xgb
                 params = {
                     'n_estimators': self.kwargs.get('n_estimators', 100),
-                    'max_depth': self.kwargs.get('max_depth', 6),
-                    'learning_rate': self.kwargs.get('learning_rate', 0.1),
-                    'min_child_weight': self.kwargs.get('min_child_weight', 1),
-                    'subsample': self.kwargs.get('subsample', 0.8),
-                    'colsample_bytree': self.kwargs.get('colsample_bytree', 0.8),
+                    # STRICTER DEFAULT: Reduce depth to prevent memorization
+                    'max_depth': self.kwargs.get('max_depth', 3), 
+                    'learning_rate': self.kwargs.get('learning_rate', 0.05),
+                    # REGULARIZATION: Force conservative splits
+                    'min_child_weight': self.kwargs.get('min_child_weight', 5),
+                    'gamma': self.kwargs.get('gamma', 0.2),
+                    # STOCHASTICITY: Train on subsets to reduce variance
+                    'subsample': self.kwargs.get('subsample', 0.6),
+                    'colsample_bytree': self.kwargs.get('colsample_bytree', 0.6),
                     'random_state': self.kwargs.get('random_state', 42),
                     'n_jobs': self.kwargs.get('n_jobs', -1),
                     'verbosity': 0,
+                    # L1/L2 Regularization
+                    'reg_alpha': self.kwargs.get('reg_alpha', 0.1),
+                    'reg_lambda': self.kwargs.get('reg_lambda', 1.0),
                 }
                 return xgb.XGBRegressor(**params)
             except ImportError:
