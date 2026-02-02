@@ -495,7 +495,7 @@ class ModelTournament:
         
         # Step 0: Download FRED-MD
         logger.info("Step 0: Loading FRED-MD data...")
-        fred_loader = FREDMDLoader(data_dir='data/raw')
+        fred_loader = FREDMDLoader(data_dir='data/raw', config=self.config)
         raw_data = fred_loader.download_current_vintage()
         
         # Step 1: Identify stationary levels

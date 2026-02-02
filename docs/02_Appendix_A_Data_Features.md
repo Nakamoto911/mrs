@@ -29,7 +29,7 @@
 - Monthly frequency, 1959–present
 - Developed by McCracken & Ng (2016)
 - Standardized transformation codes for stationarity
-- 8 categories: Output/Income (17), Labor (32), Housing (10), Consumption/Orders (14), Money/Credit (14), Interest Rates/Spreads (22), Prices (21), Stock Market (3 - **Excluded for Causality**)
+- 8 categories: Output/Income (17), Labor (32), Housing (10), Consumption/Orders (14 - **Excluded for Causality**), Money/Credit (14), Interest Rates/Spreads (22), Prices (21), Stock Market (3 - **Excluded for Causality**)
 
 **Historical Vintages (ALFRED):**
 - **1999-08 to 2014-12:** `historical_fred-md.zip`
@@ -121,6 +121,8 @@ Automated pipeline: ~750 raw features generated pointwise or using strictly expa
 - **Output:** Human-readable CSVs in `data/raw/` (`fred_md.csv`, `assets.csv`, `vintages/`)
 - **Process:**
     - Fetch FRED-MD current vintage
+    - **Automated Mapping**: Identifies variables and their groups using `FRED-MD_historic_appendix.csv`.
+    - **Exclusion**: Strictly filters out Group 6 (Consumption) and Group 8 (Stock Market) series based on config.
     - Fetch FRED-MD historical vintages (Download & Unzip Archives + Monthly CSVs)
     - Fetch Asset Prices & Calculate Returns
     - Extend to 1959 using FRED-MD proxies (consistent with Section 1.2)

@@ -11,7 +11,7 @@ data:
     transform_url: "https://files.stlouisfed.org/files/htdocs/fred-md/Appendix_Tables_Update.pdf"
     n_variables: 128
     # NEW: Explicitly exclude stock market variables (Category 8)
-    exclude_categories: [8]  # 8 = Stock Market
+    exclude_categories: [6, 8]  # 6 = Interest and Exchange Rates, 8 = Stock Market
     exclude_variables: []    # Optional: specific variables to drop
     categories:
       - name: "Output/Income"

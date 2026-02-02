@@ -41,21 +41,19 @@ class FREDMDLoader:
     # Stable download URL for FRED-MD current (Dec 2025) - retained for reference
     FRED_MD_URL = "https://www.stlouisfed.org/-/media/project/frbstl/stlouisfed/research/fred-md/monthly/2025-12-md.csv?sc_lang=en&hash=14BCC7AA1D5AB89D3459B69B8AE67D10"
     
-    # Category mappings (Specifically Category 8 as requested)
-    CATEGORY_MAPPING = {
+    # Category mappings (Default fallback for Group 8)
+    DEFAULT_CATEGORY_MAPPING = {
         'S&P 500': 8,
         'S&P div yield': 8,
         'S&P PE ratio': 8,
-        # 'S&P: indust': 8, # Alternative name in some vintages
     }
     
-    def __init__(self, data_dir: str = "data/raw", fred_api_key: Optional[str] = None, config: Optional[dict] = None):
+    def __init__(self, data_dir: str = "data/raw", config: Optional[dict] = None):
         """
         Initialize FRED-MD loader.
         
         Args:
             data_dir: Directory containing the acquired data (fred_md.csv)
-            fred_api_key: Not used in this reader-only version
             config: Optional configuration dictionary
         """
         self.data_dir = Path(data_dir)
@@ -63,6 +61,27 @@ class FREDMDLoader:
         self._raw_data = None
         self._transform_codes = None
         self._transformed_data = None
+        
+        # Initialize category mapping with defaults, then try to load from appendix
+        self.category_mapping = self.DEFAULT_CATEGORY_MAPPING.copy()
+        self._load_category_mapping()
+
+    def _load_category_mapping(self):
+        """Load category mapping from FRED-MD appendix if available."""
+        appendix_path = self.data_dir.parent / "fred_md" / "FRED-MD_historic_appendix.csv"
+        if appendix_path.exists():
+            try:
+                # Use latin-1 encoding as seen in previous attempts
+                df_app = pd.read_csv(appendix_path, encoding='latin-1')
+                if 'fred' in df_app.columns and 'group' in df_app.columns:
+                    # Update mapping from CSV: series mnemonic -> group id
+                    csv_mapping = dict(zip(df_app['fred'], df_app['group']))
+                    self.category_mapping.update(csv_mapping)
+                    logger.info(f"Loaded {len(csv_mapping)} category mappings from {appendix_path}")
+            except Exception as e:
+                logger.warning(f"Could not load category mapping from {appendix_path}: {e}")
+        else:
+            logger.warning(f"Appendix file not found at {appendix_path}. Using default category mapping.")
 
     def download_current_vintage(self, save: bool = False) -> pd.DataFrame:
         """
@@ -100,7 +119,7 @@ class FREDMDLoader:
                 cols_to_drop.append(col)
                 continue
             
-            cat = self.CATEGORY_MAPPING.get(col)
+            cat = self.category_mapping.get(col)
             if cat in exclude_cats:
                 cols_to_drop.append(col)
                 
