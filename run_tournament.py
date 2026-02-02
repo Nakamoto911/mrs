@@ -256,17 +256,6 @@ class ModelTournament:
     
     ASSETS = ['SPX', 'BOND', 'GOLD']
     
-    MODEL_CONFIGS = {
-        'ridge': {'type': 'linear', 'params': {'alpha': 1.0}},
-        'lasso': {'type': 'linear', 'params': {'alpha': 0.0001, 'max_iter': 100000}},
-        'elastic_net': {'type': 'linear', 'params': {'alpha': 0.0001, 'l1_ratio': 0.5, 'max_iter': 100000}},
-        'random_forest': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'n_jobs': 1}},
-        'xgboost': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
-        'lightgbm': {'type': 'tree', 'params': {'n_estimators': 100, 'max_depth': 4, 'learning_rate': 0.1, 'n_jobs': 1}},
-        'mlp': {'type': 'neural', 'params': {'hidden_layers': [64, 32], 'epochs': 50}},
-        'lstm': {'type': 'neural', 'params': {}},
-    }
-    
     def __init__(self, config_path: str = 'configs/experiment_config.yaml'):
         """
         Initialize tournament.
@@ -276,6 +265,9 @@ class ModelTournament:
         """
         self.config_path = Path(config_path)
         self.config = self._load_config()
+        
+        # Build model configurations from YAML
+        self.model_configs = self._build_model_configs()
         
         # Initialize paths
         self.data_dir = Path('data')
@@ -315,6 +307,40 @@ class ModelTournament:
             with open(self.config_path) as f:
                 return yaml.safe_load(f)
         return {}
+
+    def _build_model_configs(self) -> dict:
+        """
+        Build model configurations dynamically from YAML config.
+        Iterates over models defined in config and maps them to their type and parameters.
+        """
+        model_configs = {}
+        models_cfg = self.config.get('models', {})
+        
+        # Map YAML categories to internal model types
+        category_map = {
+            'linear': 'linear',
+            'tree': 'tree',
+            'neural': 'neural'
+        }
+        
+        for category, internal_type in category_map.items():
+            category_cfg = models_cfg.get(category, {})
+            if not isinstance(category_cfg, dict):
+                continue
+                
+            for model_name, cfg in category_cfg.items():
+                if model_name in ['targets']: # Skip special keys if any
+                    continue
+                
+                # Extract parameters from 'params' key if available, or use empty dict
+                params = cfg.get('params', {})
+                
+                model_configs[model_name] = {
+                    'type': internal_type,
+                    'params': params
+                }
+        
+        return model_configs
     
     def _is_model_enabled(self, model_name: str) -> bool:
         """Check if a model is enabled in the configuration."""
@@ -506,7 +532,7 @@ class ModelTournament:
             Trained model
         """
         # Delegate to the standalone function
-        model_config = self.MODEL_CONFIGS.get(model_name)
+        model_config = self.model_configs.get(model_name)
         if model_config is None:
             raise ValueError(f"Unknown model: {model_name}")
             
@@ -532,7 +558,7 @@ class ModelTournament:
             assets = self.ASSETS
         
         if models is None or (len(models) == 1 and models[0].lower() == 'all'):
-            models = list(self.MODEL_CONFIGS.keys())
+            models = list(self.model_configs.keys())
         
         if self.features is None:
             raise ValueError("Features not loaded. Run feature pipeline first.")
@@ -618,7 +644,7 @@ class ModelTournament:
                         return self._should_skip_lstm(X, y, folds)
                     lstm_check = check_lstm
 
-                model_config = self.MODEL_CONFIGS.get(model_name)
+                model_config = self.model_configs.get(model_name)
                 
                 tasks.append(
                     delayed(process_single_model)(
@@ -635,7 +661,7 @@ class ModelTournament:
             # Process Results
             for res in parallel_results:
                 model_name = res['model']
-                model_config = self.MODEL_CONFIGS.get(model_name)
+                model_config = self.model_configs.get(model_name)
                 
                 if res['status'] == 'skipped':
                     logger.warning(f"  Skipping {model_name} for {asset}: {res['reason']}")

@@ -18,7 +18,7 @@ def test_parallel_execution():
         'linear': {'ridge': {'type': 'linear', 'params': {'alpha': 1.0}, 'enabled': True}},
         'tree': {'xgboost': {'type': 'tree', 'params': {'n_estimators': 10}, 'enabled': True}}
     }
-    tournament.MODEL_CONFIGS = {
+    tournament.model_configs = {
         'ridge': {'type': 'linear', 'params': {'alpha': 1.0}},
         'xgboost': {'type': 'tree', 'params': {'n_estimators': 10}}
     }

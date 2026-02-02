@@ -27,7 +27,7 @@ class TestTournamentFlow(unittest.TestCase):
         self.tournament = ModelTournament()
         self.tournament.experiments_dir = Path('experiments')
         self.tournament.ASSETS = ['SPX', 'BOND', 'GOLD']
-        self.tournament.MODEL_CONFIGS = {'m1': {}, 'm2': {}}
+        self.tournament.model_configs = {'m1': {}, 'm2': {}}
         self.tournament.targets = {'SPX_return': pd.Series([1, 2]), 'BOND_return': pd.Series([1, 2]), 'GOLD_return': pd.Series([1, 2])}
         self.tournament.features = pd.DataFrame({'f1': [1, 2]})
         
