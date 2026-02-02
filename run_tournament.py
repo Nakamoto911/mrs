@@ -790,6 +790,45 @@ class ModelTournament:
                         logger.info(f"{pair_name:<25}: {count}/{total_folds} folds ({stability:.1%}) - {status}")
                     logger.info("-" * 40)
 
+            # LOG FEATURE REDUCTION (CLUSTERING) REPORT
+            if latest_fold_metadata:
+                fold_results = [f.get('clustering_results') for f in latest_fold_metadata if f.get('clustering_results')]
+                if fold_results:
+                    n_in = [r['n_features_in'] for r in fold_results]
+                    n_out = [r['n_features_out'] for r in fold_results]
+                    
+                    avg_in = np.mean(n_in)
+                    avg_out = np.mean(n_out)
+                    reduction = (1 - avg_out / avg_in) * 100 if avg_in > 0 else 0
+                    
+                    logger.info("\nFEATURE REDUCTION REPORT (HIERARCHICAL CLUSTERING)")
+                    logger.info("-" * 60)
+                    logger.info(f"Avg Features In:  {avg_in:.1f}")
+                    logger.info(f"Avg Features Out: {avg_out:.1f}")
+                    logger.info(f"Avg Reduction:    {reduction:.1f}%")
+                    
+                    # Track feature selection stability
+                    feature_counts = {}
+                    total_folds = len(fold_results)
+                    for r in fold_results:
+                        for feat in r['selected_features']:
+                            feature_counts[feat] = feature_counts.get(feat, 0) + 1
+                    
+                    # Log top stable features
+                    stable_features = sorted(
+                        [f for f, c in feature_counts.items() if c == total_folds],
+                        key=lambda x: x
+                    )
+                    logger.info(f"Stable Features (100% selection): {len(stable_features)}")
+                    if stable_features:
+                        logger.info(f"Samples: {', '.join(stable_features[:10])}{'...' if len(stable_features) > 10 else ''}")
+                    
+                    # Log unstable features
+                    unstable = [f for f, c in feature_counts.items() if c < total_folds]
+                    if unstable:
+                        logger.info(f"Dynamic Features (<100% selection): {len(unstable)}")
+                    logger.info("-" * 60)
+
             # --- Ensemble Strategy Execution (Post-Asset Loop) ---
             try:
                 # 1. Filter: Retrieve all successful results for the current asset

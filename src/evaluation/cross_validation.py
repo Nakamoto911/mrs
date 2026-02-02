@@ -207,6 +207,14 @@ class CrossValidator:
                         # Capture cointegration results
                         if step_name == 'cointegration' and hasattr(step_obj, 'validation_results'):
                             fold_step_metadata['cointegration_results'] = step_obj.validation_results
+                        
+                        # Capture clustering results (Spec 05)
+                        if step_name == 'clustering' and hasattr(step_obj, 'selected_features_'):
+                            fold_step_metadata['clustering_results'] = {
+                                'n_features_in': len(step_obj.feature_names_in_) if hasattr(step_obj, 'feature_names_in_') else len(X_train.columns),
+                                'n_features_out': len(step_obj.selected_features_),
+                                'selected_features': step_obj.selected_features_
+                            }
                 
                 if fold_step_metadata:
                     if not hasattr(self, 'fold_metadata'): self.fold_metadata = []
