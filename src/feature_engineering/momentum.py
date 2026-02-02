@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class MomentumFeatureGenerator:
     """Generates momentum features for all stationary series."""
     
-    DEFAULT_WINDOWS = [3, 6, 12]
+    DEFAULT_WINDOWS = [6, 12, 18]
     
     def __init__(self, windows: Optional[List[int]] = None,
                  include_acceleration: bool = True,
@@ -77,7 +77,7 @@ class MomentumFeatureGenerator:
 
 
 def generate_all_momentum_features(df: pd.DataFrame,
-                                   windows: List[int] = [3, 6, 12]) -> pd.DataFrame:
+                                   windows: List[int] = [6, 12, 18]) -> pd.DataFrame:
     """Convenience function to generate all momentum features."""
     generator = MomentumFeatureGenerator(windows=windows)
     return generator.generate_features(df)

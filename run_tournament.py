@@ -394,7 +394,11 @@ class ModelTournament:
         logger.info("### Global Settings")
         logger.info(f"- **Assets**: {', '.join(self.ASSETS)}")
         logger.info(f"- **Cross-Validation**: {cv_cfg.get('validation_months', 36)}M validation, {cv_cfg.get('step_months', 6)}M step")
-        logger.info(f"- **Holdout**: {'Enabled (' + str(holdout_cfg.get('holdout_pct', 0.15)*100) + '%)' if self.holdout_enabled else 'Disabled'}")
+        # Update Holdout logging
+        holdout_status = "Enabled" if self.holdout_enabled else "Disabled (Maximizing Effective N)"
+        if self.holdout_enabled:
+            holdout_status += f" ({holdout_cfg.get('holdout_pct', 0.15)*100}%)"
+        logger.info(f"- **Holdout**: {holdout_status}")
         
         logger.info("\n### Feature Engineering")
         logger.info(f"- **Cointegration**: {'Enabled' if coint_cfg.get('validate', True) else 'Disabled'}")
@@ -525,8 +529,10 @@ class ModelTournament:
         # ect_features, coint_summary = generate_cointegration_features(raw_data)
         
         # Step 5: Momentum features
-        logger.info("Step 5: Generating momentum features...")
-        momentum = generate_all_momentum_features(transformed)
+        # Fetch from config or use new default
+        windows = self.config.get('features', {}).get('momentum_windows', [6, 12, 18])
+        logger.info(f"Step 5: Generating momentum features (Windows: {windows})...")
+        momentum = generate_all_momentum_features(transformed, windows=windows)
         
         # Prepare raw levels for PIT cointegration (rename to avoid collision)
         # Fetch from config to ensure we have all vars needed for validation

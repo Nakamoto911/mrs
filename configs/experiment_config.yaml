@@ -144,7 +144,7 @@ features:
     max_lag: 12
 
   # Momentum windows (months)
-  momentum_windows: [3, 6, 12]
+  momentum_windows: [6, 12, 18]
 
   # Cross-asset features
   cross_asset:
@@ -354,7 +354,7 @@ validation:
 
   # NEW: Holdout configuration (Added per Spec 01)
   holdout:
-    enabled: true
+    enabled: false
     method: "percentage"
     holdout_pct: 0.15  # Last 15% of data
     min_holdout_months: 48

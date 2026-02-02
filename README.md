@@ -13,6 +13,8 @@ A quantitative research platform for discovering which macroeconomic variables d
 7. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals.
 8. **Dynamic Data Strategy**: Automated identification of series via FRED-MD appendix to enable robust category-based filtering.
 9. **Excess Return Targeting**: Target variable is Excess Return (Stock Return - Risk Free Rate) to isolate risk premium.
+10. **Maximized Effective Sample Size ($N_{eff}$)**: Abolished static holdout in favor of utilizing the full historical dataset (1959–Present) within the Cross-Validation loop for higher t-stat reliability.
+11. **Frequency Alignment**: Momentum windows are strictly aligned to 6, 12, and 18 months to eliminate high-frequency noise and capture business cycle trends relevant to the 12-month forecast horizon.
 
 ## Quick Start
 
