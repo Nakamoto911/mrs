@@ -32,7 +32,7 @@ This research system discovers which macroeconomic variables drive asset returns
 
 Build an automated model discovery platform identifying, for each asset (US Equities, Bonds, Gold):
 
-- Top 5–10 macroeconomic variables (dominant drivers) predicting future returns and volatility
+- Top 5–10 macroeconomic variables (dominant drivers) predicting future **excess returns** (over risk-free rate) and volatility
 - How these drivers differ between bullish and bearish regimes
 ### 2.3 Robust Training Layer
 

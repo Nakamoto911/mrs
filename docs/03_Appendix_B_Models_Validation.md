@@ -108,7 +108,7 @@ To maintain estimation integrity across the high-dimensional (~750-feature) spac
 
 | Metric | Definition | Primary For | Target |
 |---|---|---|---|
-| IC | Spearman rank correlation | Return forecasts | > 0.05* |
+| IC | Spearman rank correlation | Excess Return forecasts | > 0.05* |
 | RMSE | Root mean squared error | Volatility forecasts | Minimize |
 | MAE | Mean absolute error | Robustness check | Minimize |
 | R² (OOS) | Out-of-sample R-squared | Variance explained | > 0.10 |

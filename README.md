@@ -12,6 +12,7 @@ A quantitative research platform for discovering which macroeconomic variables d
 5. **Orthogonality Verification**: Automated checks ensure non-linear "Level" and linear "Slope" features remain distinct.
 6. **Empirical Cointegration Validation**: Statistical verification of theoretical relationships (Johansen/Engle-Granger) to prevent spurious macro signals.
 7. **Dynamic Data Strategy**: Automated identification of series via FRED-MD appendix to enable robust category-based filtering.
+8. **Excess Return Targeting**: Target variable is Excess Return (Stock Return - Risk Free Rate) to isolate risk premium.
 
 ## Quick Start
 

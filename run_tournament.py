@@ -589,7 +589,7 @@ class ModelTournament:
     
     def prepare_targets(self, horizon_months: int = 24) -> Dict[str, pd.Series]:
         """
-        Prepare target variables for each asset.
+        Prepare target variables for each asset based on configuration.
         
         Args:
             horizon_months: Forecast horizon in months
@@ -597,11 +597,39 @@ class ModelTournament:
         Returns:
             Dictionary of target Series
         """
-        logger.info(f"Preparing targets with {horizon_months}M horizon...")
+        # Load Target Configuration
+        target_config = self.config.get('models', {}).get('targets', {}).get('returns', {})
+        target_type = target_config.get('type', 'nominal').lower()
+        deflator_id = target_config.get('deflator', None)
+        
+        logger.info(f"Preparing targets: {target_type.upper()} returns with {horizon_months}M horizon...")
         
         asset_loader = AssetPriceLoader(data_dir='data/raw')
         
         targets = {}
+
+        # Load Deflator Data (FRED-MD) if needed
+        deflator_series = None
+        if target_type in ['excess', 'real']:
+            if not deflator_id:
+                logger.warning(f"Target type '{target_type}' requires a 'deflator' ID. Defaulting to Nominal.")
+                target_type = 'nominal'
+            else:
+                try:
+                    fred_loader = FREDMDLoader(data_dir='data/raw', config=self.config)
+                    fred_data = fred_loader.download_current_vintage()
+                    if deflator_id in fred_data.columns:
+                        deflator_series = fred_data[deflator_id]
+                        # Ensure alignment
+                        deflator_series.index = pd.to_datetime(deflator_series.index)
+                        deflator_series.index = deflator_series.index.to_period('M').to_timestamp()
+                        logger.info(f"Loaded deflator '{deflator_id}' for {target_type} return calculation.")
+                    else:
+                        logger.warning(f"Deflator '{deflator_id}' not found in FRED-MD. Defaulting to Nominal Returns.")
+                        target_type = 'nominal'
+                except Exception as e:
+                    logger.warning(f"Could not load FRED-MD for deflator: {e}. Defaulting to Nominal Returns.")
+                    target_type = 'nominal'
         
         for asset in self.ASSETS:
             try:
@@ -611,11 +639,34 @@ class ModelTournament:
                 # Align dates to Start-of-Month to match FRED-MD features
                 prices.index = prices.index.to_period('M').to_timestamp()
                 
-                # Compute forward returns
-                returns = np.log(prices.shift(-horizon_months) / prices)
-                targets[f'{asset}_return'] = returns
+                # Compute forward nominal returns
+                nominal_returns = np.log(prices.shift(-horizon_months) / prices)
+                
+                if target_type == 'nominal':
+                    targets[f'{asset}_return'] = nominal_returns
+                
+                elif target_type == 'excess' and deflator_series is not None:
+                    # Excess Return: Nominal - Risk Free Rate
+                    # Assume deflator is an annualized yield in percent (e.g., GS10)
+                    rf_annual = np.log(1 + deflator_series / 100)
+                    rf_horizon = rf_annual * (horizon_months / 12)
+                    
+                    # Align indices
+                    common_idx = nominal_returns.index.intersection(rf_horizon.index)
+                    targets[f'{asset}_return'] = nominal_returns.loc[common_idx] - rf_horizon.loc[common_idx]
+
+                elif target_type == 'real' and deflator_series is not None:
+                    # Real Return: Nominal - Inflation
+                    # Inflation = log(Index_t+h / Index_t)
+                    # Assume deflator is a price index (e.g., CPIAUCSL)
+                    inflation = np.log(deflator_series.shift(-horizon_months) / deflator_series)
+                    
+                    # Align indices
+                    common_idx = nominal_returns.index.intersection(inflation.index)
+                    targets[f'{asset}_return'] = nominal_returns.loc[common_idx] - inflation.loc[common_idx]
                 
                 # Compute forward volatility
+                # Volatility is generally calculated on nominal returns to reflect market risk
                 monthly_returns = np.log(prices / prices.shift(1))
                 fwd_vol = monthly_returns.shift(-horizon_months).rolling(6).std() * np.sqrt(12)
                 targets[f'{asset}_volatility'] = fwd_vol
@@ -625,6 +676,7 @@ class ModelTournament:
         
         self.targets = targets
         return targets
+
     
     def train_model(self, model_name: str, X: pd.DataFrame, y: pd.Series) -> any:
         """

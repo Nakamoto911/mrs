@@ -199,11 +199,13 @@ models:
   # Target variables
   targets:
     returns:
-      horizon_months: 12
+      horizon_months: 12        # CHANGED: 12 months is the "Goldilocks" horizon
+      type: "excess"            # NEW: "nominal", "excess", or "real"
+      deflator: "GS10"          # NEW: FRED series ID for adjustment (GS10 for excess, CPIAUCSL for real)
       metric: "IC"
     volatility:
-      horizon_months: 24
-      lookback_months: 6
+      horizon_months: 12        # CHANGED: Match return horizon
+      lookback_months: 6        # Volatility lookback window
       metric: "RMSE"
 
   # Linear models
