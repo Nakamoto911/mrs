@@ -83,12 +83,14 @@ class FREDMDLoader:
         else:
             logger.warning(f"Appendix file not found at {appendix_path}. Using default category mapping.")
 
-    def download_current_vintage(self, save: bool = False) -> pd.DataFrame:
+    def download_current_vintage(self, save: bool = False, apply_exclusions: bool = True) -> pd.DataFrame:
         """
         Load the current FRED-MD vintage from local CSV.
         
         Args:
             save: Ignored (kept for compatibility)
+            apply_exclusions: If True, drops configured categories/variables.
+                              If False, returns raw full dataset (used for Targets).
             
         Returns:
             DataFrame with FRED-MD data
@@ -107,25 +109,29 @@ class FREDMDLoader:
             df['sasdate'] = pd.to_datetime(df['sasdate'])
             df.set_index('sasdate', inplace=True)
             
-        # Apply Category/Variable Exclusions (Spec 01)
-        fred_cfg = self.config.get('data', {}).get('fred_md', {})
-        exclude_cats = fred_cfg.get('exclude_categories', [])
-        exclude_vars = fred_cfg.get('exclude_variables', [])
-        
-        cols_to_drop = []
-        for col in df.columns:
-            # Check exclusions
-            if col in exclude_vars:
-                cols_to_drop.append(col)
-                continue
+        # Only apply exclusions if the flag is True
+        if apply_exclusions:
+            # Apply Category/Variable Exclusions (Spec 01)
+            fred_cfg = self.config.get('data', {}).get('fred_md', {})
+            exclude_cats = fred_cfg.get('exclude_categories', [])
+            exclude_vars = fred_cfg.get('exclude_variables', [])
             
-            cat = self.category_mapping.get(col)
-            if cat in exclude_cats:
-                cols_to_drop.append(col)
+            cols_to_drop = []
+            for col in df.columns:
+                # Check exclusions
+                if col in exclude_vars:
+                    cols_to_drop.append(col)
+                    continue
                 
-        if cols_to_drop:
-            logger.info(f"Excluding {len(cols_to_drop)} variables based on configuration: {cols_to_drop}")
-            df = df.drop(columns=cols_to_drop)
+                cat = self.category_mapping.get(col)
+                if cat in exclude_cats:
+                    cols_to_drop.append(col)
+                    
+            if cols_to_drop:
+                logger.info(f"Excluding {len(cols_to_drop)} variables based on configuration.")
+                df = df.drop(columns=cols_to_drop)
+        else:
+            logger.info("Exclusions bypassed (Target Generation Mode). Loading full dataset.")
 
         # Load Transforms
         self._transform_codes = {}

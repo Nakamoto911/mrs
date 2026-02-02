@@ -617,7 +617,8 @@ class ModelTournament:
             else:
                 try:
                     fred_loader = FREDMDLoader(data_dir='data/raw', config=self.config)
-                    fred_data = fred_loader.download_current_vintage()
+                    # Bypass exclusions to find deflator (e.g., GS10)
+                    fred_data = fred_loader.download_current_vintage(apply_exclusions=False)
                     if deflator_id in fred_data.columns:
                         deflator_series = fred_data[deflator_id]
                         # Ensure alignment
