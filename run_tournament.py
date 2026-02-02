@@ -754,6 +754,12 @@ class ModelTournament:
 
                 model_config = self.model_configs.get(model_name)
                 
+                # --- NEW: CONFIG AUDIT ---
+                if model_config['type'] == 'tree':
+                    params = model_config.get('params', {})
+                    logger.info(f"  Audit {model_name} Params: depth={params.get('max_depth')}, "
+                                f"mcw={params.get('min_child_weight')}, subsample={params.get('subsample')}")
+                
                 tasks.append(
                     delayed(process_single_model)(
                         model_name, asset, X_train, y_train, validator, 
@@ -865,6 +871,26 @@ class ModelTournament:
                 pipeline = create_pipeline_for_model(model_instance, coint_pairs, coint_cfg, clustering_cfg)
                 pipeline.fit(X_train, y_train)
                 
+                # --- NEW: FORENSIC FEATURE AUDIT ---
+                try:
+                    # Extract the model step (assuming pipeline structure: 'model' is the last step)
+                    model_step = pipeline.named_steps['model']
+                    
+                    if hasattr(model_step, 'get_feature_importance'):
+                        importances = model_step.get_feature_importance()
+                        
+                        # 1. Check for Dominance (Single feature > 30% is suspicious)
+                        top_features = importances.head(5)
+                        logger.info(f"    Feature Importance Audit ({model_name}):")
+                        for name, imp in top_features.items():
+                            logger.info(f"      - {name:<20}: {imp:.4f}")
+                            
+                        if not top_features.empty and top_features.iloc[0] > 0.30:
+                            logger.warning(f"      [!] DOMINANCE ALERT: {top_features.index[0]} drives {top_features.iloc[0]:.1%} of prediction.")
+                            
+                except Exception as e:
+                    logger.warning(f"    Could not audit feature importance: {e}")
+                
                 model_path = self.experiments_dir / 'models' / f'{asset}_{model_name}.joblib'
                 try:
                     joblib.dump(pipeline, model_path)
@@ -872,8 +898,28 @@ class ModelTournament:
                     logger.error(f"    Failed to save model {model_name}: {e}")
 
                 # Capture fold metadata
+                # Capture fold metadata
                 if res.get('fold_metadata'):
                     latest_fold_metadata = res['fold_metadata']
+
+                    # --- NEW: TEMPORAL STABILITY AUDIT ---
+                    logger.info(f"    Fold-by-Fold Stability Analysis ({model_name}):")
+                    fold_ics = []
+                    for i, fold in enumerate(res['fold_metadata']):
+                        # Assuming 'metrics' key exists in fold_metadata, or adjust based on your CVResult structure
+                        # You might need to check how CrossValidator stores per-fold metrics in your implementation
+                        fold_ic = fold.get('metrics', {}).get('IC', np.nan)
+                        fold_ics.append(fold_ic)
+                        
+                        # Log outlier folds
+                        if abs(fold_ic) > 0.30: # Suspiciously high
+                             logger.warning(f"      Fold {i} (Outlier): IC = {fold_ic:.3f} (Suspiciously High)")
+                        elif fold_ic < -0.10:   # Crash
+                             logger.warning(f"      Fold {i} (Crash):   IC = {fold_ic:.3f}")
+                    
+                    # Check for "Lucky Fold" Syndrome (e.g., 4 bad folds, 1 amazing fold)
+                    positive_folds = sum(1 for x in fold_ics if x > 0)
+                    logger.info(f"      Positive Folds: {positive_folds}/{len(fold_ics)}")
         
             # LOG COINTEGRATION VALIDATION REPORT (Once per asset)
             if latest_fold_metadata:
