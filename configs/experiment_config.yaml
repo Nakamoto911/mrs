@@ -241,8 +241,9 @@ models:
       min_samples_leaf_range: [10, 50]
       params:
         n_estimators: 100
-        max_depth: 4
-        n_jobs: 1
+        max_depth: 3
+        min_samples_leaf: 10
+        n_jobs: -1
     xgboost:
       enabled: true
       learning_rate_range: [0.01, 0.3]
@@ -253,9 +254,12 @@ models:
       colsample_bytree_range: [0.6, 1.0]
       params:
         n_estimators: 100
-        max_depth: 4
-        learning_rate: 0.1
-        n_jobs: 1
+        max_depth: 3
+        learning_rate: 0.05
+        min_child_weight: 10
+        subsample: 0.6
+        colsample_bytree: 0.6
+        n_jobs: -1
     lightgbm:
       enabled: false
       learning_rate_range: [0.01, 0.3]

@@ -757,8 +757,12 @@ class ModelTournament:
                 # --- NEW: CONFIG AUDIT ---
                 if model_config['type'] == 'tree':
                     params = model_config.get('params', {})
-                    logger.info(f"  Audit {model_name} Params: depth={params.get('max_depth')}, "
-                                f"mcw={params.get('min_child_weight')}, subsample={params.get('subsample')}")
+                    if 'random_forest' in model_name:
+                         logger.info(f"  Audit {model_name} Params: depth={params.get('max_depth')}, "
+                                     f"n_leaf={params.get('min_samples_leaf')}, subsample={params.get('max_samples', 'Default')}")
+                    else:
+                         logger.info(f"  Audit {model_name} Params: depth={params.get('max_depth')}, "
+                                     f"mcw={params.get('min_child_weight', 'N/A')}, subsample={params.get('subsample', 'N/A')}")
                 
                 tasks.append(
                     delayed(process_single_model)(

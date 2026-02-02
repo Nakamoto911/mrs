@@ -171,27 +171,34 @@ class LinearModelWrapper(BaseEstimator):
         return self.get_coefficients().abs().sort_values(ascending=False)
 
 
-class VECMWrapper:
+from sklearn.base import BaseEstimator, RegressorMixin
+
+class VECMWrapper(BaseEstimator, RegressorMixin):
     """Vector Error Correction Model wrapper for cointegrated systems."""
     
-    def __init__(self, max_lag: int = 12, coint_rank: int = 1):
+    def __init__(self, max_lag: int = 12, coint_rank: Any = 1):
         """
         Initialize VECM.
         
         Args:
             max_lag: Maximum lag order
-            coint_rank: Cointegration rank
+            coint_rank: Cointegration rank (int) or 'auto'
         """
         self.max_lag = max_lag
         self.coint_rank = coint_rank
+        self.max_lag = max_lag
+        self.coint_rank = coint_rank
         self.model = None
+        self.target_name = None
+        self.selected_features_ = None
         
-    def fit(self, df: pd.DataFrame) -> 'VECMWrapper':
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> 'VECMWrapper':
         """
-        Fit VECM model.
+        Fit VECM model with dimensionality reduction.
         
         Args:
-            df: DataFrame with multiple time series
+            X: Feature DataFrame
+            y: Target series (optional, will be joined with X)
             
         Returns:
             self
@@ -199,14 +206,94 @@ class VECMWrapper:
         try:
             from statsmodels.tsa.vector_ar.vecm import VECM as StatsVECM
             
+            # 1. Handle Feature Selection if X is too large
+            # VECM is parameter hungry (p * K^2). For 12 lags, K must be very small.
+            # 12 lags * 3 vars = 36 params. 120 samples is okay.
+            # 12 lags * 10 vars = 120 params. 120 samples is IMPOSSIBLE.
+            MAX_FEATURES = 3 
+            
+            if len(X.columns) > MAX_FEATURES:
+                if y is not None:
+                    # Select top features correlated with y
+                    correlations = X.corrwith(y).abs().sort_values(ascending=False)
+                    self.selected_features_ = correlations.head(MAX_FEATURES).index.tolist()
+                else:
+                    # Fallback to variance
+                    variances = X.var().sort_values(ascending=False)
+                    self.selected_features_ = variances.head(MAX_FEATURES).index.tolist()
+                
+                logger.debug(f"VECM: Reduced to {len(self.selected_features_)} features (max {MAX_FEATURES}) to conserve DoF")
+                X_subset = X[self.selected_features_]
+            else:
+                self.selected_features_ = X.columns.tolist()
+                X_subset = X
+            
+            # Combine X and y if y is provided
+            if y is not None:
+                if isinstance(y, pd.Series):
+                    self.target_name = y.name if y.name else 'target'
+                    # Make sure name is unique
+                    if self.target_name in X_subset.columns:
+                        self.target_name = f"{self.target_name}_y"
+                        y = y.rename(self.target_name)
+                    df = pd.concat([X_subset, y], axis=1)
+                else:
+                    # If y is array-like but not series
+                    self.target_name = 'target'
+                    y_series = pd.Series(y, index=X.index, name=self.target_name)
+                    df = pd.concat([X_subset, y_series], axis=1)
+            else:
+                df = X_subset
+                self.target_name = df.columns[-1]
+
             # Clean data
             df_clean = df.dropna()
             
-            if len(df_clean) < self.max_lag + 20:
-                raise ValueError("Insufficient data for VECM")
+            # Ensure frequency is set to avoid statsmodels warnings
+            if hasattr(df_clean.index, 'freq') and df_clean.index.freq is None:
+                try:
+                    inferred_freq = pd.infer_freq(df_clean.index)
+                    if inferred_freq:
+                        df_clean.index.freq = inferred_freq
+                except Exception:
+                    pass
+
+                except Exception:
+                    pass
+
+            # Dynamic Lag Reduction to preserve Degrees of Freedom
+            n_samples = len(df_clean)
+            n_vars = len(df_clean.columns)
+            # Rough rule: n_samples > 3 * n_vars * params_per_var (= lags)
+            # n_samples > 3 * K * p
+            # p < n_samples / (3 * K)
+            max_feasible_lag = max(1, int(n_samples / (5 * n_vars))) # Conservative divider 5
+            
+            active_lag = min(self.max_lag, max_feasible_lag)
+            if active_lag < self.max_lag:
+                logger.debug(f"VECM: Reducing lags from {self.max_lag} to {active_lag} for stability (N={n_samples}, K={n_vars})")
+
+            # Final check
+            if n_samples < active_lag + 10:
+                logger.warning(f"Insufficient data for VECM (n={n_samples}). Needs {active_lag + 10}")
+                self.model = None
+                self.is_fitted_ = True
+                return self
+            
+            # Handle coint_rank conversion
+            rank = self.coint_rank
+            if not isinstance(rank, int):
+                # Conservative rank based on number of variables
+                # K variables implies rank between 0 and K
+                # Default to min(1, K-1)
+                rank = max(1, min(1, len(df.columns) - 1))
+            
+            # Ensure rank < number of variables
+            if rank >= len(df.columns):
+                 rank = len(df.columns) - 1
             
             # Fit VECM
-            self.model = StatsVECM(df_clean, k_ar_diff=self.max_lag, coint_rank=self.coint_rank)
+            self.model = StatsVECM(df_clean, k_ar_diff=active_lag, coint_rank=rank)
             self.fit_result = self.model.fit()
             
         except ImportError:
@@ -216,31 +303,54 @@ class VECMWrapper:
             logger.warning(f"VECM fitting failed: {e}")
             self.model = None
         
+        self.is_fitted_ = True
         return self
     
-    def predict(self, steps: int = 1) -> Optional[pd.DataFrame]:
+    def predict(self, X: pd.DataFrame) -> pd.Series:
         """
-        Generate forecasts.
+        Generate forecasts matching the length of X.
         
         Args:
-            steps: Number of steps ahead
+            X: Feature DataFrame (used to determine number of steps)
             
         Returns:
-            Forecast DataFrame
+            Forecast Series for the target variable
         """
-        if self.model is None:
-            return None
+        if self.model is None or not hasattr(self, 'fit_result'):
+            return pd.Series(0.0, index=X.index)
         
         try:
+            # Filter to selected features if applicable
+            if self.selected_features_ is not None and len(X.columns) != len(self.selected_features_):
+                # Ensure overlap
+                valid_feats = [f for f in self.selected_features_ if f in X.columns]
+                if len(valid_feats) == len(self.selected_features_):
+                    X_subset = X[self.selected_features_]
+                else:
+                    # Fallback if features missing (should shouldn't happen in standard CV)
+                    logger.warning("VECM predict: imputing missing selected features")
+                    X_subset = X.reindex(columns=self.selected_features_).fillna(0)
+            else:
+                 X_subset = X
+                 
+            steps = len(X_subset)
+            # VECM forecast is recursive from end of fitting data
             forecast = self.fit_result.predict(steps=steps)
-            return pd.DataFrame(forecast, columns=self.model.endog_names)
+            forecast_df = pd.DataFrame(forecast, columns=self.model.endog_names)
+            
+            # Return only the target column
+            if self.target_name and self.target_name in forecast_df.columns:
+                return pd.Series(forecast_df[self.target_name].values, index=X.index)
+            else:
+                return pd.Series(forecast_df.iloc[:, -1].values, index=X.index)
+                
         except Exception as e:
             logger.warning(f"VECM prediction failed: {e}")
-            return None
+            return pd.Series(0.0, index=X.index)
 
 
 def create_linear_model(model_type: str, alpha: float = 1.0, 
-                       l1_ratio: float = 0.5, **kwargs) -> LinearModelWrapper:
+                       l1_ratio: float = 0.5, **kwargs) -> Any:
     """
     Factory function for linear models.
     
@@ -251,7 +361,7 @@ def create_linear_model(model_type: str, alpha: float = 1.0,
         **kwargs: Additional parameters for the underlying model
         
     Returns:
-        LinearModelWrapper instance
+        LinearModelWrapper instance or VECMWrapper
     """
     if model_type == 'ridge':
         return LinearModelWrapper('ridge', alpha=alpha, **kwargs)
@@ -259,6 +369,11 @@ def create_linear_model(model_type: str, alpha: float = 1.0,
         return LinearModelWrapper('lasso', alpha=alpha, **kwargs)
     elif model_type == 'elastic_net':
         return LinearModelWrapper('elastic_net', alpha=alpha, l1_ratio=l1_ratio, **kwargs)
+    elif model_type == 'vecm':
+        return VECMWrapper(
+            max_lag=kwargs.get('max_lag', 12),
+            coint_rank=kwargs.get('coint_rank', 1)
+        )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
