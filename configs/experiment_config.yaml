@@ -199,7 +199,7 @@ models:
   # Target variables
   targets:
     returns:
-      horizon_months: 24
+      horizon_months: 12
       metric: "IC"
     volatility:
       horizon_months: 24
@@ -228,7 +228,7 @@ models:
         l1_ratio: 0.5
         max_iter: 100000
     vecm:
-      enabled: true
+      enabled: false
       max_lag: 12
       coint_rank: "auto"
 
@@ -345,8 +345,8 @@ validation:
   # Time-series cross-validation
   cv:
     min_train_months: 120  # 10 years minimum
-    validation_months: 36  # Increased to 36 months to exceed 24M horizon
-    step_months: 6  # semi-annual rebalancing
+    validation_months: 60  # Increased to 60 months to exceed 6M horizon (10x)
+    step_months: 12  # annual rebalancing to match horizon
     n_folds: "auto"  # depends on data length
 
   # NEW: Holdout configuration (Added per Spec 01)

@@ -671,7 +671,8 @@ class ModelTournament:
             raise ValueError("Features not loaded. Run feature pipeline first.")
         
         if not self.targets:
-            self.prepare_targets()
+            horizon = self.config.get('models', {}).get('targets', {}).get('returns', {}).get('horizon_months', 24)
+            self.prepare_targets(horizon_months=horizon)
         
         # Setup cross-validation
         cv_config = self.config.get('validation', {}).get('cv', {})

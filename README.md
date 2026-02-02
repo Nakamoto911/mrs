@@ -80,7 +80,7 @@ macro_regime_system/
 ## Understanding IC Thresholds
 
 This system uses literature-calibrated IC thresholds that reflect realistic 
-expectations for macro-timing models at 24-month horizons:
+expectations for macro-timing models at 12-month horizons:
 
 | Asset Class | Excellent | Good | Acceptable | Minimum |
 |-------------|-----------|------|------------|---------|

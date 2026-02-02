@@ -78,9 +78,9 @@ Groups correlated features (GDP Growth, IP Growth, Income Growth all measure "ac
 
 Beyond growth rates, include historical quintile indicators. GS10 declining from 5% (Q5) vs. 2% (Q1) has different implications. Captures regime-dependent dynamics that change features alone miss.
 
-### 5. 24-Month Strategic Forecast Horizon
+### 5. 12-Month Strategic Forecast Horizon
 
-For 5-year horizons with semi-annual rebalancing: 12M too short for structural trends, 36M+ excessive error. 24M balances macro signal extraction with forecast reliability.
+For horizons with annual rebalancing: 12M balances macro signal extraction with forecast reliability and provides the industry standard for tactical benchmarks.
 
 ---
 
@@ -92,7 +92,7 @@ For 5-year horizons with semi-annual rebalancing: 12M too short for structural t
 | **Bonds (BOND)** | IC > 0.18 | IC > 0.12 | IC > 0.08 | IC > 0.08, Risk < 30% |
 | **Commodities (GOLD)** | IC > 0.10 | IC > 0.06 | IC > 0.04 | IC > 0.04, Risk < 30% |
 
-**Notes:** IC (Information Coefficient) measures rank-ordering predictive power. These thresholds are calibrated to empirical benchmarks (Welch & Goyal, 2008; Campbell & Thompson, 2008) for 24-month horizons. Bonds achieve higher ICs due to term structure persistence; Commodities are the most noise-dominated.
+**Notes:** IC (Information Coefficient) measures rank-ordering predictive power. These thresholds are calibrated to empirical benchmarks (Welch & Goyal, 2008; Campbell & Thompson, 2008) for 12-month horizons. Bonds achieve higher ICs due to term structure persistence; Commodities are the most noise-dominated.
 
 ---
 

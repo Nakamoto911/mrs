@@ -128,7 +128,7 @@ To maintain estimation integrity across the high-dimensional (~750-feature) spac
 ## Robust Statistical Inference
 
 ### 4.1 Overlapping Observations
-The 24-month forecast horizon creates 23 months of overlap between consecutive observations, inducing severe autocorrelation in residuals. Naive standard errors understate risk by 3-5x.
+The 12-month forecast horizon creates 11 months of overlap between consecutive observations, inducing severe autocorrelation in residuals. Naive standard errors understate risk by 3-5x.
 
 ### 4.2 Adjustment Methodologies
 - **Newey-West (1987):** Heteroskedasticity and Autocorrelation Consistent (HAC) standard errors using Bartlett/Parzen kernels.
