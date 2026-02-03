@@ -2,6 +2,8 @@
 
 A quantitative research platform for discovering which macroeconomic variables drive asset returns across different market regimes.
 
+**Full Documentation:** [System Architecture & Methodology Master Document](docs/System_Architecture_and_Methodology.md)
+
 ## Key Innovations
 
 1. **Causality-First Data Selection**: Explicitly excludes FRED-MD Category 8 (Stock Market) and Category 6 (Interest and Exchange Rates) to prevent circularity and ensure focus on lead indicators.
