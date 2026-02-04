@@ -222,9 +222,9 @@ macro_regime_system/
 ### 5.2 Execution Workflows
 
 The `run_tournament.py` script supports modular execution flags:
--   **Full Discovery**: `python run_tournament.py --assets all --models all` (6–9 hours)
--   **Single Cycle**: `python run_tournament.py --asset SPX --model xgboost` (20 min)
--   **Feature Debug**: `python run_tournament.py --features-only` (1.5 hours)
+-   **Full Discovery**: `python run_tournament.py --assets all --models all`
+-   **Single Cycle**: `python run_tournament.py --asset SPX --model xgboost`
+-   **Feature Debug**: `python run_tournament.py --features-only`
 
 ### 5.3 Production Interface (Streamlit)
 
@@ -236,7 +236,7 @@ A 5-page **Streamlit** application serves as the control center:
 5.  **Data Inspector**: Audit logs for Cointegration Stability and PIT data availability.
 
 ### 5.4 Deployment Workflow
-1.  **Weekly**: Automated refresh of FRED-MD/Asset data (~10 min).
+1.  **Weekly**: Automated refresh of FRED-MD/Asset data.
 2.  **Monthly**: Generate new forecasts using frozen models.
-3.  **Quarterly**: Full model re-training and cluster re-generation (~4 hours).
+3.  **Quarterly**: Full model re-training and cluster re-generation.
 4.  **Annually**: Comprehensive ALFRED Validation run to detect structural breaks in data reliability.
